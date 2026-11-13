@@ -11,6 +11,8 @@ export type SandboxSnapshot = {
 export type SandboxList = {
   /** The list, fresh or from cache. Never throws; a failure rides on `failure`. */
   get: (force?: boolean) => Promise<SandboxSnapshot>;
+  /** The last snapshot, without waiting on the CLI. */
+  peek: () => SandboxSnapshot | null;
   /** Drops the cache, so the next read reloads. */
   invalidate: () => void;
 };
@@ -47,6 +49,7 @@ export const createSandboxList = (options: {
       });
       return loading;
     },
+    peek: () => current,
     invalidate: () => {
       current = null;
     },

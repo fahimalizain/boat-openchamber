@@ -12,6 +12,7 @@ import { listEnvironments } from './domain/environments.ts';
 import { listSandboxes } from './domain/sandboxes.ts';
 import { createFollowers, type EventSink, type Followers } from './followers.ts';
 import { createInstructionsWriter } from './instructions.ts';
+import { createProjectRanking, type ProjectRanking } from './project/ranking.ts';
 import { createRemoteCache } from './project/remotes.ts';
 import { createScoper, type Scoper } from './project/scope.ts';
 import { performSandboxAction } from './status/actions.ts';
@@ -31,6 +32,7 @@ export type ServiceContext = {
   agents: RunningAgents;
   followers: Followers;
   scoper: Scoper;
+  ranking: ProjectRanking;
   statusView: (directory: string | null) => Promise<GuestStatusView>;
   refresh: () => Promise<SandboxSnapshot>;
   forget: (sandboxId: string) => void;
@@ -67,9 +69,11 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
   const followers = createFollowers({ sink: host.emit, ...FOLLOWERS });
 
   const environments = createEnvironmentList({ ttlMs: TTL.environments, load: listEnvironments });
+  const ranking = createProjectRanking();
   const scoper = createScoper({
     environments,
     remotes: createRemoteCache({ ttlMs: TTL.remotes }),
+    ranking,
   });
 
   return {
@@ -79,6 +83,7 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
     agents,
     followers,
     scoper,
+    ranking,
     statusView: async (directory) => {
       const snapshot = await sandboxes.get();
       const scope = await scoper.apply(snapshot.sandboxes, directory);

@@ -1,4 +1,4 @@
-/** Text helpers the panel shows: time left, time ago, a local clock. */
+/** Relative and absolute times, shared by the panel and the mention text. */
 
 export const remaining = (iso: string | null): string => {
   if (!iso) return '';
@@ -30,6 +30,9 @@ export const clock = (iso: string | null): string => {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
-export const messageOf = (failure: unknown): string => (
-  failure instanceof Error && failure.message ? failure.message : 'Boat did not answer.'
-);
+/** A fixed UTC stamp, so transcripts read the same everywhere. */
+export const stamp = (at: number): string => {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+};

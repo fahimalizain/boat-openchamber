@@ -14,6 +14,7 @@ import type { ProjectMatch, Sandbox } from '../../shared/types.ts';
 import type { EnvironmentList } from '../data/environment-list.ts';
 import type { EnvironmentSummary } from '../domain/environments.ts';
 import { folderNameOf, matchSandbox, type ProjectScope } from './matcher.ts';
+import type { ProjectRanking } from './ranking.ts';
 import type { RemoteCache } from './remotes.ts';
 
 export type ScopedSandbox = {
@@ -41,6 +42,7 @@ const usableDirectory = (directory: string | null): string | null => (
 export const createScoper = (deps: {
   environments: EnvironmentList;
   remotes: RemoteCache;
+  ranking: ProjectRanking;
 }): Scoper => ({
   apply: async (sandboxes, directory) => {
     const project = usableDirectory(directory);
@@ -66,6 +68,11 @@ export const createScoper = (deps: {
       const matchedBy = matchSandbox(sandbox, environment, scope);
       return { sandbox, matchedBy, inProject: matchedBy !== null };
     });
+
+    deps.ranking.remember(
+      project,
+      new Set(entries.filter((entry) => entry.inProject).map((entry) => entry.sandbox.id)),
+    );
 
     return {
       entries,

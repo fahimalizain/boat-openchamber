@@ -1,7 +1,7 @@
 /** Reads that fill the state: sandboxes, conversations and one conversation's events. */
 import type { ServiceClient } from './api.ts';
-import { messageOf } from './format.ts';
 import { resetConversation, type Cell, type Reporter } from './state.ts';
+import { messageOf } from './state.ts';
 
 export type Loaders = {
   sandboxes: () => Promise<void>;

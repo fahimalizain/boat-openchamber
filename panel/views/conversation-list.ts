@@ -1,7 +1,7 @@
 import { mountList, type ListItem } from '@openchamber/sdk/ui';
 
 import { clip } from '../../shared/json.ts';
-import { timeAgo } from '../format.ts';
+import { timeAgo } from '../../shared/time.ts';
 import { buttonSlot } from '../kit.ts';
 import type { PanelState } from '../store.ts';
 

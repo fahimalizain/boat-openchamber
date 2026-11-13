@@ -101,6 +101,8 @@ var readServiceScheduleRequest = (body) => {
     return null;
   return { v: SERVICE_SCHEDULE_WIRE_VERSION, requestId, id, at: Number(at) };
 };
+var MENTIONS_SEARCH_PATH = "/mentions/search";
+var MENTIONS_RESOLVE_PATH = "/mentions/resolve";
 var MENTIONS_IDLE_MS = 10 * 60000;
 class ServiceHostError extends Error {
   code;
@@ -649,6 +651,7 @@ var createSandboxList = (options) => {
       });
       return loading;
     },
+    peek: () => current,
     invalidate: () => {
       current = null;
     }
@@ -824,8 +827,10 @@ var normalizeEvent = (raw, fallbackConversation = null) => {
     error: readString(data.error)
   };
 };
-var listEvents = async (sandboxId, conversationId) => {
-  const data = await runBoat("events", [sandboxId, "--convo", conversationId], { timeoutMs: 30000 });
+var listEvents = async (sandboxId, conversationId, options = {}) => {
+  const data = await runBoat("events", [sandboxId, "--convo", conversationId], {
+    timeoutMs: options.timeoutMs ?? 30000
+  });
   const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.events) ? data.events : [];
   return rows.flatMap((row) => {
     const event = normalizeEvent(row, conversationId);
@@ -1117,6 +1122,24 @@ var createInstructionsWriter = (options) => {
   };
 };
 
+// service/project/ranking.ts
+var MAX_DIRECTORIES = 8;
+var createProjectRanking = () => {
+  const byDirectory = new Map;
+  return {
+    remember: (directory, inProject) => {
+      byDirectory.delete(directory);
+      byDirectory.set(directory, inProject);
+      if (byDirectory.size <= MAX_DIRECTORIES)
+        return;
+      const oldest = byDirectory.keys().next().value;
+      if (oldest)
+        byDirectory.delete(oldest);
+    },
+    projectIds: (directory) => byDirectory.get(directory) ?? null
+  };
+};
+
 // service/project/remotes.ts
 import { execFile as execFile2 } from "node:child_process";
 var GIT_TIMEOUT_MS = 2000;
@@ -1225,6 +1248,7 @@ var createScoper = (deps) => ({
       const matchedBy = matchSandbox(sandbox, environment, scope);
       return { sandbox, matchedBy, inProject: matchedBy !== null };
     });
+    deps.ranking.remember(project, new Set(entries.filter((entry) => entry.inProject).map((entry) => entry.sandbox.id)));
     return {
       entries,
       scoped: true,
@@ -1486,9 +1510,11 @@ var createServiceContext = (host) => {
   });
   const followers = createFollowers({ sink: host.emit, ...FOLLOWERS });
   const environments = createEnvironmentList({ ttlMs: TTL.environments, load: listEnvironments });
+  const ranking = createProjectRanking();
   const scoper = createScoper({
     environments,
-    remotes: createRemoteCache({ ttlMs: TTL.remotes })
+    remotes: createRemoteCache({ ttlMs: TTL.remotes }),
+    ranking
   });
   return {
     sandboxes,
@@ -1497,6 +1523,7 @@ var createServiceContext = (host) => {
     agents,
     followers,
     scoper,
+    ranking,
     statusView: async (directory) => {
       const snapshot = await sandboxes.get();
       const scope = await scoper.apply(snapshot.sandboxes, directory);
@@ -1802,6 +1829,317 @@ var eventRoutes = (deps) => [
   })
 ];
 
+// shared/time.ts
+var remaining = (iso) => {
+  if (!iso)
+    return "";
+  const milliseconds = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(milliseconds))
+    return "";
+  if (milliseconds <= 0)
+    return "stopping";
+  const minutes = Math.max(1, Math.round(milliseconds / 60000));
+  if (minutes < 60)
+    return `${minutes}m left`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours}h left` : `${hours}h ${rest}m left`;
+};
+var timeAgo = (iso) => {
+  if (!iso)
+    return "";
+  const milliseconds = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(milliseconds) || milliseconds < 60000)
+    return "just now";
+  const minutes = Math.floor(milliseconds / 60000);
+  if (minutes < 60)
+    return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24)
+    return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+};
+var stamp = (at) => {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime()))
+    return "";
+  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+};
+
+// shared/transcript.ts
+var speakerOf = (event) => {
+  if (event.type === "steer")
+    return "steer";
+  if (event.role === "user")
+    return "you";
+  if (event.role === "assistant")
+    return event.model ?? "agent";
+  return event.type || "event";
+};
+var transcriptEntries = (events) => [...events].map((event) => ({
+  id: event.id,
+  at: event.at,
+  role: event.role,
+  speaker: speakerOf(event),
+  status: event.status,
+  streaming: event.streaming,
+  failed: Boolean(event.error) || event.status === "failed" || event.status === "error",
+  text: event.text,
+  tools: event.tools,
+  error: event.error
+})).sort((left, right) => left.at - right.at || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+var oneLine = (text) => text.replace(/\s+/g, " ").trim();
+var entryMarkdown = (entry) => {
+  const tags = [
+    entry.failed ? "failed" : null,
+    entry.status && entry.status !== "running" ? entry.status : null,
+    entry.streaming ? "streaming" : null
+  ].filter(Boolean);
+  const when = stamp(entry.at);
+  const heading = `**${entry.speaker === "you" ? "You" : entry.speaker}**${when ? ` · ${when}` : ""}${tags.length > 0 ? ` · ${tags.join(", ")}` : ""}`;
+  const lines = [heading];
+  for (const tool of entry.tools) {
+    const detail = oneLine(tool.detail);
+    lines.push(`- \`${tool.name}\`${detail ? ` ${detail}` : ""}${tool.isError ? " (error)" : ""}`);
+  }
+  if (entry.text.trim())
+    lines.push("", entry.text.trim());
+  if (entry.error)
+    lines.push("", `**Error:** ${entry.error}`);
+  return lines.join(`
+`);
+};
+var markdownTranscript = (entries, limit) => {
+  if (entries.length === 0)
+    return { text: "", truncated: false };
+  const blocks = entries.map(entryMarkdown);
+  let text = "";
+  let kept = 0;
+  for (let index = blocks.length - 1;index >= 0; index -= 1) {
+    const block = blocks[index] ?? "";
+    const separator = text ? 2 : 0;
+    if (text.length + block.length + separator > limit)
+      break;
+    text = text ? `${block}
+
+${text}` : block;
+    kept += 1;
+  }
+  if (kept === blocks.length)
+    return { text, truncated: false };
+  const note = "_Older turns were left out to keep this transcript short._";
+  if (kept === 0) {
+    const newest = blocks[blocks.length - 1] ?? "";
+    const room = Math.max(0, limit - note.length - 2);
+    return { text: `${note}
+
+${newest.slice(0, room)}
+
+_…_`, truncated: true };
+  }
+  return { text: `${note}
+
+${text}`, truncated: true };
+};
+
+// service/mentions/render.ts
+var MENTION_TEXT_MAX2 = 16000;
+var CONVERSATIONS_SHOWN = 10;
+var sizeOf3 = (sandbox) => {
+  const parts = [sandbox.type ?? "default"];
+  if (sandbox.memoryGB !== null)
+    parts.push(`${sandbox.memoryGB} GB`);
+  if (sandbox.vcpu !== null)
+    parts.push(`${sandbox.vcpu} vCPU`);
+  return parts.join(" · ");
+};
+var stateOf = (sandbox) => {
+  const left = isUpState(sandbox.state) ? remaining(sandbox.archiveAfter) : "";
+  return left ? `${sandbox.state} · ${left}` : sandbox.state;
+};
+var harnessOf = (conversation) => {
+  if (!conversation)
+    return null;
+  const harness = conversation.lastHarness ?? "agent";
+  const model = conversation.lastModel ? `/${conversation.lastModel}` : "";
+  const prompts = `${conversation.prompts} prompt${conversation.prompts === 1 ? "" : "s"}`;
+  return [
+    `${harness}${model}`,
+    prompts,
+    conversation.running ? "running" : "idle",
+    timeAgo(conversation.lastPromptAt)
+  ].filter(Boolean).join(" · ");
+};
+var renderSandboxMention = (sandbox, conversations) => {
+  const lines = [
+    `## Sandbox ${sandbox.name} (\`${sandbox.id}\`)`,
+    "",
+    `- State: ${stateOf(sandbox)}`,
+    `- Size: ${sizeOf3(sandbox)}`,
+    sandbox.environment ? `- Environment: ${sandbox.environment}` : null,
+    `- Conversations: ${conversations.length}`,
+    "",
+    conversations.length > 0 ? "**Conversations**" : "_No conversations yet._"
+  ].filter((line) => line !== null);
+  for (const conversation of conversations.slice(0, CONVERSATIONS_SHOWN)) {
+    const agent = harnessOf(conversation) ?? "agent";
+    const preview = conversation.lastPromptPreview ? ` — "${clip(conversation.lastPromptPreview, 100)}"` : "";
+    lines.push(`- \`${conversation.id}\`: ${agent}${preview}`);
+  }
+  if (conversations.length > CONVERSATIONS_SHOWN) {
+    lines.push(`- and ${conversations.length - CONVERSATIONS_SHOWN} more.`);
+  }
+  lines.push("", `Run commands inside it with \`boat exec ${sandbox.id} -- <command>\`. Start a new conversation with \`boat prompt ${sandbox.id} --new "<text>"\`, or continue one with \`--resume <conversation>\`.`);
+  return clip(lines.join(`
+`), MENTION_TEXT_MAX2);
+};
+var renderConversationMention = (input) => {
+  const name = input.sandbox?.name ?? input.sandboxId;
+  const lines = [
+    `## Sandbox ${name} (\`${input.sandboxId}\`) — conversation \`${input.conversationId}\``,
+    ""
+  ];
+  if (input.sandbox) {
+    lines.push(`- State: ${stateOf(input.sandbox)}`, `- Size: ${sizeOf3(input.sandbox)}`);
+  }
+  const agent = harnessOf(input.conversation);
+  if (agent)
+    lines.push(`- Agent: ${agent}`);
+  lines.push(`- Continue: \`boat prompt ${input.sandboxId} --resume ${input.conversationId} "<text>"\``, `- Commands: \`boat exec ${input.sandboxId} -- <command>\``, "", "**Transcript** (oldest first)", "");
+  const header = lines.join(`
+`);
+  const entries = transcriptEntries(input.events);
+  if (entries.length === 0)
+    return clip(`${header}_No events yet._`, MENTION_TEXT_MAX2);
+  const { text } = markdownTranscript(entries, Math.max(400, MENTION_TEXT_MAX2 - header.length - 2));
+  return clip(`${header}${text}`, MENTION_TEXT_MAX2);
+};
+
+// service/mentions/rows.ts
+var MENTION_ROW_MAX = 20;
+var MENTION_TEXT_MAX3 = 120;
+var mentionSandboxId = (sandboxId) => `sandbox:${sandboxId}`;
+var mentionConversationId = (sandboxId, conversationId) => `conversation:${sandboxId}:${conversationId}`;
+var parseMentionId = (id) => {
+  if (!id)
+    return null;
+  const [kind, sandboxId, conversationId] = id.split(":");
+  if (!isSandboxId(sandboxId))
+    return null;
+  if (kind === "sandbox")
+    return { kind, sandboxId };
+  if (kind === "conversation" && isConversationId(conversationId)) {
+    return { kind, sandboxId, conversationId };
+  }
+  return null;
+};
+var conversationSubtitle = (sandbox, conversation) => {
+  const harness = conversation.lastHarness ?? "agent";
+  const model = conversation.lastModel ? `/${conversation.lastModel}` : "";
+  return [
+    sandbox.name || sandbox.id,
+    `${harness}${model}`,
+    conversation.running ? "running" : "idle",
+    timeAgo(conversation.lastPromptAt)
+  ].filter(Boolean).join(" · ");
+};
+var sandboxSubtitle = (sandbox) => {
+  const left = isUpState(sandbox.state) ? remaining(sandbox.archiveAfter) : "";
+  return [sandbox.name || sandbox.id, sandbox.state, left].filter(Boolean).join(" · ");
+};
+var matches = (needle, ...fields) => needle.length === 0 || fields.some((field) => field?.toLowerCase().includes(needle));
+var mentionRows = (input) => {
+  const needle = input.query.trim().toLowerCase();
+  const sandboxes = [...input.sandboxes].sort((left, right) => {
+    const project = Number(!input.projectIds?.has(left.id)) - Number(!input.projectIds?.has(right.id));
+    if (project !== 0)
+      return project;
+    const up = Number(!isUpState(left.state)) - Number(!isUpState(right.state));
+    if (up !== 0)
+      return up;
+    return (left.name || left.id).localeCompare(right.name || right.id);
+  });
+  const rows = [];
+  for (const sandbox of sandboxes) {
+    const conversations = [...input.conversations(sandbox.id) ?? []].sort((left, right) => Number(right.running) - Number(left.running) || (Date.parse(right.lastPromptAt ?? "") || 0) - (Date.parse(left.lastPromptAt ?? "") || 0));
+    for (const conversation of conversations) {
+      const title = clip(conversation.lastPromptPreview ?? "New conversation", MENTION_TEXT_MAX3);
+      const subtitle = clip(conversationSubtitle(sandbox, conversation), MENTION_TEXT_MAX3);
+      if (!matches(needle, title, subtitle, sandbox.id, conversation.id))
+        continue;
+      rows.push({ id: mentionConversationId(sandbox.id, conversation.id), title, subtitle });
+      if (rows.length >= MENTION_ROW_MAX)
+        return rows;
+    }
+    const title = "Sandbox overview";
+    const subtitle = clip(sandboxSubtitle(sandbox), MENTION_TEXT_MAX3);
+    if (!matches(needle, title, subtitle, sandbox.id, sandbox.environment))
+      continue;
+    rows.push({ id: mentionSandboxId(sandbox.id), title, subtitle });
+    if (rows.length >= MENTION_ROW_MAX)
+      return rows;
+  }
+  return rows;
+};
+
+// service/routes/mentions.ts
+var mentionRoutes = (deps) => [
+  route("POST", MENTIONS_SEARCH_PATH, async (context) => {
+    const body = await context.json();
+    const directory = readString(body?.directory);
+    try {
+      const snapshot = deps.sandboxes.peek() ?? await deps.sandboxes.get();
+      for (const sandbox of snapshot.sandboxes) {
+        if (isUpState(sandbox.state))
+          deps.agents.check(sandbox.id);
+      }
+      const items = mentionRows({
+        sandboxes: snapshot.sandboxes,
+        conversations: (sandboxId) => deps.conversations.peek(sandboxId),
+        projectIds: directory ? deps.ranking.projectIds(directory) : null,
+        query: readString(body?.query) ?? ""
+      });
+      const answer = { items };
+      return context.reply(200, answer);
+    } catch {
+      const answer = { items: [] };
+      return context.reply(200, answer);
+    }
+  }),
+  route("POST", MENTIONS_RESOLVE_PATH, async (context) => {
+    const body = await context.json();
+    const mention = parseMentionId(readString(body?.id));
+    if (!mention)
+      return context.reply(400, { error: "Unknown mention." });
+    const snapshot = deps.sandboxes.peek() ?? await deps.sandboxes.get();
+    const sandbox = snapshot.sandboxes.find((entry) => entry.id === mention.sandboxId) ?? null;
+    try {
+      if (mention.kind === "sandbox") {
+        if (!sandbox)
+          return context.reply(404, { error: "That sandbox is not in the list any more." });
+        const conversations = deps.conversations.peek(sandbox.id) ?? await listConversations(sandbox.id);
+        const answer = { text: renderSandboxMention(sandbox, conversations) };
+        return context.reply(200, answer);
+      }
+      const cached = deps.conversations.peek(mention.sandboxId);
+      const conversation = cached?.find((entry) => entry.id === mention.conversationId) ?? null;
+      const events = await listEvents(mention.sandboxId, mention.conversationId, { timeoutMs: 8000 });
+      const answer = {
+        text: renderConversationMention({
+          sandbox,
+          sandboxId: mention.sandboxId,
+          conversationId: mention.conversationId,
+          conversation,
+          events
+        })
+      };
+      return context.reply(200, answer);
+    } catch (failure) {
+      return context.reply(502, { error: describeFailure(failure).text });
+    }
+  })
+];
+
 // service/routes/sandboxes.ts
 var summaryOf = (sandbox) => ({
   id: sandbox.id,
@@ -1930,6 +2268,7 @@ var route2 = createRouter([
   ...conversationRoutes(context),
   ...eventRoutes(context),
   ...agentRoutes(context),
+  ...mentionRoutes(context),
   ...scheduleRoutes({
     onWake: () => {
       context.refresh().catch(() => {});

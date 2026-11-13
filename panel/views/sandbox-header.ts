@@ -5,7 +5,7 @@ import {
   isUpState,
   type SandboxAction,
 } from '../../shared/types.ts';
-import { clock, remaining } from '../format.ts';
+import { clock, remaining } from '../../shared/time.ts';
 import { buttonSlot } from '../kit.ts';
 import type { PanelState } from '../store.ts';
 

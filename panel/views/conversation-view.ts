@@ -1,30 +1,24 @@
+import { transcriptEntries, type TranscriptEntry } from '../../shared/transcript.ts';
 import { mountEmpty } from '@openchamber/sdk/ui';
 
-import type { UiEvent } from '../../shared/types.ts';
 import { el } from '../kit.ts';
 import type { PanelState } from '../store.ts';
 
 export type ConversationView = { render: (state: PanelState) => void };
 
-const eventNode = (event: UiEvent): HTMLElement => {
-  const failed = Boolean(event.error) || event.status === 'failed' || event.status === 'error';
-  const node = el('div', `msg ${event.role}${failed ? ' failed' : ''}`);
+const entryNode = (entry: TranscriptEntry): HTMLElement => {
+  const node = el('div', `msg ${entry.role}${entry.failed ? ' failed' : ''}`);
   const head = el('div', 'msg-head');
-  const who = event.type === 'steer'
-    ? 'steer'
-    : event.role === 'user'
-      ? 'you'
-      : event.role === 'assistant'
-        ? (event.model ?? 'agent')
-        : (event.type || 'event');
-  head.append(el('span', '', who));
-  if (event.status && event.status !== 'running') head.append(el('span', `tag${failed ? ' bad' : ''}`, event.status));
-  if (event.streaming) head.append(el('span', 'tag live', 'streaming'));
+  head.append(el('span', '', entry.speaker));
+  if (entry.status && entry.status !== 'running') {
+    head.append(el('span', `tag${entry.failed ? ' bad' : ''}`, entry.status));
+  }
+  if (entry.streaming) head.append(el('span', 'tag live', 'streaming'));
   node.append(head);
 
-  if (event.tools.length > 0) {
+  if (entry.tools.length > 0) {
     const tools = el('div', 'tools');
-    for (const tool of event.tools) {
+    for (const tool of entry.tools) {
       const row = el('div', `tool${tool.isError ? ' failed' : ''}`);
       row.append(el('span', 'tool-name', tool.name));
       if (tool.detail) row.append(el('span', 'tool-detail', tool.detail));
@@ -34,8 +28,8 @@ const eventNode = (event: UiEvent): HTMLElement => {
     node.append(tools);
   }
 
-  if (event.text) node.append(el('div', 'msg-text', event.text));
-  if (event.error) node.append(el('div', 'msg-error', event.error));
+  if (entry.text) node.append(el('div', 'msg-text', entry.text));
+  if (entry.error) node.append(el('div', 'msg-error', entry.error));
   return node;
 };
 
@@ -80,9 +74,7 @@ export const createConversationView = (
       return;
     }
 
-    const events = [...state.events.values()].sort((left, right) => (
-      left.at - right.at || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
-    ));
+    const events = transcriptEntries(state.events.values());
     const nearBottom = roots.chat.scrollTop + roots.chat.clientHeight >= roots.chat.scrollHeight - 40;
     const firstPaint = paintedConversation !== state.conversationId;
 
@@ -90,7 +82,7 @@ export const createConversationView = (
     if (events.length === 0) {
       fragment.append(el('div', 'msg system', 'No events yet. The agent writes here as it works.'));
     }
-    for (const event of events) fragment.append(eventNode(event));
+    for (const event of events) fragment.append(entryNode(event));
     roots.chat.replaceChildren(fragment);
 
     if (firstPaint || nearBottom) roots.chat.scrollTop = roots.chat.scrollHeight;

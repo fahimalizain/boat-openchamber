@@ -9,6 +9,7 @@ import { createRequestContext, sendReply } from './http.ts';
 import { agentRoutes } from './routes/agent.ts';
 import { conversationRoutes } from './routes/conversations.ts';
 import { eventRoutes } from './routes/events.ts';
+import { mentionRoutes } from './routes/mentions.ts';
 import { sandboxRoutes } from './routes/sandboxes.ts';
 import { scheduleRoutes } from './routes/schedule.ts';
 import { statusRoutes } from './routes/status.ts';
@@ -38,6 +39,7 @@ const route = createRouter([
   ...conversationRoutes(context),
   ...eventRoutes(context),
   ...agentRoutes(context),
+  ...mentionRoutes(context),
   ...scheduleRoutes({
     onWake: () => {
       void context.refresh().catch(() => {});

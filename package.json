@@ -1,9 +1,17 @@
 {
   "name": "boat-openchamber",
-  "version": "1.0.0",
-  "description": "Manage boat.dev cloud sandboxes from OpenChamber's Work Status panel.",
+  "version": "0.1.0",
+  "description": "boat.dev sandboxes in OpenChamber: Work Status rows, a rail panel for live agent conversations, and @ mentions.",
   "license": "MIT",
   "author": "Fahim Ali Zain",
+  "keywords": [
+    "openchamber",
+    "openchamber-extension",
+    "boat",
+    "boat.dev",
+    "sandbox",
+    "cloud-agents"
+  ],
   "homepage": "https://github.com/fahimalizain/boat-openchamber#readme",
   "repository": {
     "type": "git",
@@ -14,9 +22,10 @@
   },
   "type": "module",
   "scripts": {
-    "build": "npx -y bun@latest x openchamber-guest-bundle --node service/main.ts service/main.js && npx -y bun@latest x openchamber-guest-bundle panel/main.ts panel/main.js",
-    "check": "npx -y bun@latest x openchamber-guest-check",
-    "test": "node --test service/project/matcher.test.ts"
+    "build": "sh scripts/bun.sh x openchamber-guest-bundle --node service/main.ts service/main.js && sh scripts/bun.sh x openchamber-guest-bundle panel/main.ts panel/main.js",
+    "check": "sh scripts/bun.sh x openchamber-guest-check",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test service/project/matcher.test.ts service/mentions/rows.test.ts shared/transcript.test.ts"
   },
   "openchamber": {
     "apiVersion": 1,
@@ -48,6 +57,9 @@
       "panel": {
         "entry": "panel/index.html"
       },
+      "mentions": {
+        "label": "Sandboxes"
+      },
       "instructions": true
     }
   },
@@ -55,6 +67,7 @@
     "@openchamber/sdk": "2.7.0"
   },
   "devDependencies": {
-    "@types/node": "24"
+    "@types/node": "24",
+    "typescript": "5"
   }
 }

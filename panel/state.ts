@@ -2,7 +2,11 @@
 import type { AgentProvider } from '../shared/agent.ts';
 import type { ScopedSandboxSummary } from '../shared/routes.ts';
 import type { Conversation, UiEvent } from '../shared/types.ts';
-import { messageOf } from './format.ts';
+
+/** The message a caught failure carries, or a plain fallback. */
+export const messageOf = (failure: unknown): string => (
+  failure instanceof Error && failure.message ? failure.message : 'Boat did not answer.'
+);
 
 export type BannerState = {
   tone: 'info' | 'success' | 'warning' | 'error';

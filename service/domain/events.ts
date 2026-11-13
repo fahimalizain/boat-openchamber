@@ -117,8 +117,14 @@ export const normalizeEvent = (raw: unknown, fallbackConversation: string | null
   };
 };
 
-export const listEvents = async (sandboxId: string, conversationId: string): Promise<UiEvent[]> => {
-  const data = await runBoat('events', [sandboxId, '--convo', conversationId], { timeoutMs: 30_000 });
+export const listEvents = async (
+  sandboxId: string,
+  conversationId: string,
+  options: { timeoutMs?: number } = {},
+): Promise<UiEvent[]> => {
+  const data = await runBoat('events', [sandboxId, '--convo', conversationId], {
+    timeoutMs: options.timeoutMs ?? 30_000,
+  });
   const rows = Array.isArray(data)
     ? data
     : isRecord(data) && Array.isArray(data.events)
