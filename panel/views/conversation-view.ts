@@ -41,7 +41,15 @@ const eventNode = (event: UiEvent): HTMLElement => {
 
 const emptyState = (state: PanelState): { title: string; body: string } => {
   if (state.loading) return { title: 'Loading sandboxes…', body: 'Reading the sandbox list from the boat CLI.' };
-  if (!state.sandboxId) return { title: 'No sandboxes', body: 'Create one with `boat new`, then reopen this panel.' };
+  if (!state.sandboxId) {
+    if (state.projectScoped) {
+      return {
+        title: 'No sandbox for this project',
+        body: 'Pin one with the `openchamber.project` label, or add this repository to its boat environment.',
+      };
+    }
+    return { title: 'No sandboxes', body: 'Create one with `boat new`, then reopen this panel.' };
+  }
   if (state.conversations.length === 0) {
     return { title: 'No conversations yet', body: 'Send a prompt below to start one.' };
   }

@@ -18,6 +18,8 @@ export type Sandbox = {
   environment: string | null;
   health: string | null;
   sshEndpoint: string | null;
+  /** Free-form labels set at create or fork, used to pin a sandbox to a project. */
+  labels: Record<string, string>;
 };
 
 /** What the panel picker needs, without the fields only the service uses. */
@@ -59,6 +61,9 @@ export type UiEvent = {
   error: string | null;
   conversationId: string | null;
 };
+
+/** How a sandbox was tied to an OpenChamber project, in priority order. */
+export type ProjectMatch = 'label' | 'repo' | 'name';
 
 /** Every action the panel and the sandbox row can ask for. */
 export type SandboxAction = 'stop' | 'resume' | 'extend' | 'desktop';

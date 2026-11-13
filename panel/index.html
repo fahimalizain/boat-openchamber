@@ -37,6 +37,8 @@
   }
   .row, .slot-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .row { margin-top: 8px; }
+  .groups { margin-bottom: 6px; }
+  .groups[hidden] { display: none; }
   .slot { display: inline-flex; }
   .section-head {
     display: flex; align-items: center; justify-content: space-between;
@@ -99,6 +101,7 @@
   </header>
   <div id="banner" class="banner" hidden><div id="banner-inner"></div></div>
   <section class="block">
+    <div id="sandbox-groups" class="groups" hidden></div>
     <div id="sandbox-select"></div>
     <div id="sandbox-meta" class="meta"></div>
     <div id="sandbox-actions" class="row"></div>

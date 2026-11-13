@@ -1,6 +1,7 @@
 /** The panel's state cell, its message helper, and the small resets around it. */
 import type { AgentProvider } from '../shared/agent.ts';
-import type { Conversation, SandboxSummary, UiEvent } from '../shared/types.ts';
+import type { ScopedSandboxSummary } from '../shared/routes.ts';
+import type { Conversation, UiEvent } from '../shared/types.ts';
 import { messageOf } from './format.ts';
 
 export type BannerState = {
@@ -10,8 +11,10 @@ export type BannerState = {
 };
 
 export type PanelState = {
-  sandboxes: SandboxSummary[];
+  sandboxes: ScopedSandboxSummary[];
   sandboxId: string | null;
+  /** True when the service scoped the list to the open project. */
+  projectScoped: boolean;
   conversations: Conversation[];
   conversationId: string | null;
   events: Map<string, UiEvent>;
@@ -33,6 +36,7 @@ export type Toast = (kind: 'info' | 'success' | 'error', message: string) => voi
 export const initialState = (directory: string | null): PanelState => ({
   sandboxes: [],
   sandboxId: null,
+  projectScoped: false,
   conversations: [],
   conversationId: null,
   events: new Map(),

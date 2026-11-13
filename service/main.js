@@ -227,6 +227,32 @@ var QUOTA_PROVIDER_IDLE_MS = 10 * 60000;
 // node_modules/@openchamber/sdk/dist/service-surface.js
 var SURFACE_CONTROLLERS = ["none", "agent", "user"];
 var CONTROLLERS = new Set(SURFACE_CONTROLLERS);
+// service/data/environment-list.ts
+var createEnvironmentList = (options) => {
+  let entries = [];
+  let loadedAt = 0;
+  let loading = null;
+  const read = async () => {
+    try {
+      entries = await options.load();
+    } catch {}
+    loadedAt = Date.now();
+    return entries;
+  };
+  return {
+    get: async (settings = {}) => {
+      if (!settings.force && loadedAt > 0 && Date.now() - loadedAt < options.ttlMs)
+        return entries;
+      if (loading)
+        return loading;
+      loading = read().finally(() => {
+        loading = null;
+      });
+      return loading;
+    }
+  };
+};
+
 // shared/json.ts
 var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var readString = (value) => typeof value === "string" && value.trim().length > 0 ? value : null;
@@ -388,6 +414,17 @@ var createConversationList = (options) => {
 
 // service/domain/sandboxes.ts
 var MUTATION_TIMEOUT_MS = 25000;
+var readLabels = (value) => {
+  if (!isRecord(value))
+    return {};
+  const labels = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const text = readString(entry);
+    if (text)
+      labels[key] = text;
+  }
+  return labels;
+};
 var toSandbox = (row) => {
   const id = readString(row.id);
   if (!id)
@@ -407,7 +444,8 @@ var toSandbox = (row) => {
     desktopAvailable: row.desktopAvailable === true,
     environment: readString(row.environment),
     health: readString(row.health),
-    sshEndpoint: readString(row.sshEndpoint)
+    sshEndpoint: readString(row.sshEndpoint),
+    labels: readLabels(row.labels)
   };
 };
 var listSandboxes = async () => {
@@ -615,6 +653,61 @@ var createSandboxList = (options) => {
       current = null;
     }
   };
+};
+
+// service/project/slug.ts
+var normalizeRepoSlug = (value) => {
+  const text = value.trim();
+  if (!text)
+    return null;
+  const scp = /^[^@\s/]+@([^:\s/]+):(.+)$/.exec(text);
+  if (scp?.[2])
+    return fromPath(scp[2]);
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) {
+    try {
+      return fromPath(new URL(text).pathname);
+    } catch {
+      return null;
+    }
+  }
+  return fromPath(text);
+};
+var fromPath = (path) => {
+  const parts = path.split("/").map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2)
+    return null;
+  const repo = parts[parts.length - 1]?.replace(/\.git$/i, "").toLowerCase() ?? "";
+  const owner = parts[parts.length - 2]?.toLowerCase() ?? "";
+  if (!/^[a-z0-9._-]+$/.test(owner) || !/^[a-z0-9._-]+$/.test(repo))
+    return null;
+  return `${owner}/${repo}`;
+};
+
+// service/domain/environments.ts
+var repoOf = (entry) => {
+  if (typeof entry === "string")
+    return normalizeRepoSlug(entry);
+  if (!isRecord(entry))
+    return null;
+  return normalizeRepoSlug(readString(entry.fullName) ?? readString(entry.name) ?? "");
+};
+var listEnvironments = async () => {
+  const data = await runBoat("env", ["list"], { timeoutMs: 20000 });
+  const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.environments) ? data.environments : [];
+  const summaries = [];
+  for (const row of rows) {
+    if (!isRecord(row))
+      continue;
+    const name = readString(row.name);
+    if (!name)
+      continue;
+    const repos = Array.isArray(row.selectedRepositories) ? row.selectedRepositories.flatMap((entry) => {
+      const slug = repoOf(entry);
+      return slug ? [slug] : [];
+    }) : [];
+    summaries.push({ name, repos });
+  }
+  return summaries;
 };
 
 // service/followers.ts
@@ -922,6 +1015,7 @@ var isStoppedState = (state) => state === "stopped";
 // service/status/text.ts
 var TEXT_MAX2 = 4000;
 var SANDBOXES_SHOWN = 12;
+var COMMANDS_LINE = 'Run commands with `boat exec <id> -- <command>`. Ask a sandbox agent with `boat prompt <id> --provider <claude|codex|opencode|pi|kimi|mistral|prime> --model <model> [--new | --resume <conversation>] "<text>"`; add to a running turn with `boat steer <id> --convo <conversation> "<text>"`, stop it with `boat interrupt <id>`. Pass `--json --no-update` to every command.';
 var sizeOf = (sandbox) => {
   const parts = [sandbox.type, sandbox.memoryGB === null ? null : `${sandbox.memoryGB} GB`].filter(Boolean);
   return parts.join(" ");
@@ -939,6 +1033,10 @@ var leftOf = (sandbox, now) => {
   const rest = minutes % 60;
   return rest === 0 ? `${hours}h left` : `${hours}h ${rest}m left`;
 };
+var sandboxLine = (sandbox, now) => {
+  const details = [sandbox.state, sizeOf(sandbox), leftOf(sandbox, now)].filter(Boolean).join(", ");
+  return `- ${sandbox.id} "${sandbox.name}": ${details}`;
+};
 var buildInstructions = (sandboxes, now, failure = null) => {
   if (failure && sandboxes.length === 0) {
     return clip(`Boat cloud sandboxes are unavailable. ${failure}`, 1000);
@@ -948,37 +1046,193 @@ var buildInstructions = (sandboxes, now, failure = null) => {
   if (shown.length === 0) {
     lines.push("- none right now. Create one with `boat new`.");
   } else {
-    for (const sandbox of shown) {
-      const details = [sandbox.state, sizeOf(sandbox), leftOf(sandbox, now)].filter(Boolean).join(", ");
-      lines.push(`- ${sandbox.id} "${sandbox.name}": ${details}`);
-    }
+    for (const sandbox of shown)
+      lines.push(sandboxLine(sandbox, now));
     if (sandboxes.length > shown.length) {
       lines.push(`- and ${sandboxes.length - shown.length} more (see \`boat list\`).`);
     }
   }
-  lines.push('Run commands with `boat exec <id> -- <command>`. Ask a sandbox agent with `boat prompt <id> --provider <claude|codex|opencode|pi|kimi|mistral|prime> --model <model> [--new | --resume <conversation>] "<text>"`; add to a running turn with `boat steer <id> --convo <conversation> "<text>"`, stop it with `boat interrupt <id>`. Pass `--json --no-update` to every command.');
+  lines.push(COMMANDS_LINE);
+  return clip(lines.join(`
+`), TEXT_MAX2);
+};
+var buildProjectInstructions = (projectName, sandboxes, now) => {
+  const lines = [`Boat sandboxes for the "${projectName}" project (boat.dev):`];
+  const shown = sandboxes.slice(0, SANDBOXES_SHOWN);
+  if (shown.length === 0) {
+    lines.push(`- none for this project. Pin one with the \`openchamber.project\` label, or add this repository to its boat environment.`);
+  } else {
+    for (const sandbox of shown)
+      lines.push(sandboxLine(sandbox, now));
+    if (sandboxes.length > shown.length) {
+      lines.push(`- and ${sandboxes.length - shown.length} more (see \`boat list\`).`);
+    }
+  }
+  lines.push(COMMANDS_LINE);
   return clip(lines.join(`
 `), TEXT_MAX2);
 };
 
 // service/instructions.ts
+var MAX_PROJECTS = 8;
 var createInstructionsWriter = (options) => {
-  let sent = null;
-  let retryAt = 0;
+  let globalSent = null;
+  let globalRetryAt = 0;
+  const projectSent = new Map;
+  const projectRetryAt = new Map;
+  const rememberProject = (directory, text) => {
+    projectSent.delete(directory);
+    projectSent.set(directory, text);
+    if (projectSent.size <= MAX_PROJECTS)
+      return;
+    const oldest = projectSent.keys().next().value;
+    if (oldest)
+      projectSent.delete(oldest);
+  };
   return {
     sync: async (snapshot) => {
       const text = buildInstructions(snapshot.sandboxes, Date.now(), snapshot.failure?.text ?? null);
-      if (text === sent || Date.now() < retryAt)
+      if (text === globalSent || Date.now() < globalRetryAt)
         return;
       try {
         await options.setInstructions(null, text);
-        sent = text;
+        globalSent = text;
       } catch {
-        retryAt = Date.now() + options.retryMs;
+        globalRetryAt = Date.now() + options.retryMs;
+      }
+    },
+    syncProject: async (directory, text) => {
+      if (projectSent.get(directory) === text)
+        return;
+      if (Date.now() < (projectRetryAt.get(directory) ?? 0))
+        return;
+      try {
+        await options.setInstructions(directory, text);
+        projectRetryAt.delete(directory);
+        rememberProject(directory, text);
+      } catch {
+        projectRetryAt.set(directory, Date.now() + options.retryMs);
       }
     }
   };
 };
+
+// service/project/remotes.ts
+import { execFile as execFile2 } from "node:child_process";
+var GIT_TIMEOUT_MS = 2000;
+var MAX_REMOTES = 8;
+var git = (args) => new Promise((resolve, reject) => {
+  execFile2("git", args, { timeout: GIT_TIMEOUT_MS, windowsHide: true }, (error, stdout) => {
+    if (error)
+      reject(error);
+    else
+      resolve(stdout);
+  });
+});
+var readProjectRemotes = async (directory) => {
+  let names;
+  try {
+    names = (await git(["-C", directory, "remote"])).split(/\r?\n/).map((name) => name.trim()).filter(Boolean).slice(0, MAX_REMOTES);
+  } catch {
+    return [];
+  }
+  if (names.length === 0)
+    return [];
+  const ordered = names.includes("origin") ? ["origin", ...names.filter((name) => name !== "origin")] : names;
+  const slugs = [];
+  for (const name of ordered) {
+    try {
+      const slug = normalizeRepoSlug((await git(["-C", directory, "remote", "get-url", name])).trim());
+      if (slug && !slugs.includes(slug))
+        slugs.push(slug);
+    } catch {}
+  }
+  return slugs;
+};
+var createRemoteCache = (options) => {
+  const entries = new Map;
+  return {
+    get: async (directory) => {
+      const cached = entries.get(directory);
+      if (cached && Date.now() - cached.at < options.ttlMs)
+        return cached.slugs;
+      const slugs = await readProjectRemotes(directory);
+      entries.set(directory, { at: Date.now(), slugs });
+      return slugs;
+    }
+  };
+};
+
+// service/project/scope.ts
+import { isAbsolute } from "node:path";
+
+// service/project/matcher.ts
+var PROJECT_LABEL_KEY = "openchamber.project";
+var folderNameOf = (directory) => {
+  if (!directory)
+    return null;
+  const parts = directory.split(/[\\/]+/).filter(Boolean);
+  return parts[parts.length - 1]?.toLowerCase() ?? null;
+};
+var labelMatches = (sandbox, scope) => {
+  const label = sandbox.labels[PROJECT_LABEL_KEY]?.trim();
+  if (!label)
+    return false;
+  const slug = normalizeRepoSlug(label);
+  if (slug && scope.repoSlugs.includes(slug))
+    return true;
+  if (!scope.folderName)
+    return false;
+  if (slug === scope.folderName)
+    return true;
+  return label.toLowerCase() === scope.folderName;
+};
+var matchSandbox = (sandbox, environment, scope) => {
+  if (labelMatches(sandbox, scope))
+    return "label";
+  if (environment && scope.repoSlugs.length > 0) {
+    if (environment.repos.some((repo) => scope.repoSlugs.includes(repo)))
+      return "repo";
+  }
+  const env = sandbox.environment?.toLowerCase() ?? null;
+  if (scope.folderName && env === scope.folderName)
+    return "name";
+  return null;
+};
+
+// service/project/scope.ts
+var usableDirectory = (directory) => directory && isAbsolute(directory) && !directory.includes("\x00") ? directory : null;
+var createScoper = (deps) => ({
+  apply: async (sandboxes, directory) => {
+    const project = usableDirectory(directory);
+    if (!project) {
+      return {
+        entries: sandboxes.map((sandbox) => ({ sandbox, matchedBy: null, inProject: false })),
+        scoped: false,
+        folderName: null,
+        others: 0
+      };
+    }
+    const folderName = folderNameOf(project);
+    const [repoSlugs, environments] = await Promise.all([
+      deps.remotes.get(project),
+      deps.environments.get().catch(() => [])
+    ]);
+    const byName = new Map(environments.map((environment) => [environment.name.toLowerCase(), environment]));
+    const scope = { folderName, repoSlugs };
+    const entries = sandboxes.map((sandbox) => {
+      const environment = sandbox.environment ? byName.get(sandbox.environment.toLowerCase()) ?? null : null;
+      const matchedBy = matchSandbox(sandbox, environment, scope);
+      return { sandbox, matchedBy, inProject: matchedBy !== null };
+    });
+    return {
+      entries,
+      scoped: true,
+      folderName,
+      others: entries.filter((entry) => !entry.inProject).length
+    };
+  }
+});
 
 // shared/routes.ts
 var errorBody = (error) => ({ error });
@@ -1146,8 +1400,16 @@ var buildStatusView = (input) => {
     notes.push({
       kind: "note",
       id: "note-empty",
-      text: "No sandboxes. Create one with `boat new`, then reopen this section.",
+      text: input.scoped ? "No sandbox for this project. Pin one with the `openchamber.project` label, or add this repository to its boat environment." : "No sandboxes. Create one with `boat new`, then reopen this section.",
       tone: "info"
+    });
+  }
+  if (input.scoped && input.others > 0) {
+    notes.push({
+      kind: "note",
+      id: "note-others",
+      text: `${input.others} other sandbox${input.others === 1 ? "" : "es"} in other projects.`,
+      tone: "muted"
     });
   }
   if (input.planNote) {
@@ -1202,6 +1464,8 @@ var TTL = {
   conversations: 2000,
   desktop: 5 * 60000,
   agents: 20000,
+  environments: 60000,
+  remotes: 5 * 60000,
   limits: 5 * 60000,
   instructionsRetry: 30000
 };
@@ -1221,21 +1485,34 @@ var createServiceContext = (host) => {
     onSnapshot: createWarmer({ conversations, desktop, agents, planNote, instructions })
   });
   const followers = createFollowers({ sink: host.emit, ...FOLLOWERS });
+  const environments = createEnvironmentList({ ttlMs: TTL.environments, load: listEnvironments });
+  const scoper = createScoper({
+    environments,
+    remotes: createRemoteCache({ ttlMs: TTL.remotes })
+  });
   return {
     sandboxes,
     conversations,
     desktop,
     agents,
     followers,
-    statusView: async () => {
+    scoper,
+    statusView: async (directory) => {
       const snapshot = await sandboxes.get();
+      const scope = await scoper.apply(snapshot.sandboxes, directory);
+      const visible = scope.scoped ? scope.entries.filter((entry) => entry.inProject) : scope.entries;
+      if (scope.scoped && directory && scope.folderName) {
+        instructions.syncProject(directory, buildProjectInstructions(scope.folderName, visible.map((entry) => entry.sandbox), Date.now()));
+      }
       return buildStatusView({
-        sandboxes: snapshot.sandboxes,
+        sandboxes: visible.map((entry) => entry.sandbox),
         desktopUrls: desktop.all(),
         agents: agents.all(),
         failure: snapshot.failure,
         planNote: planNote.current(),
-        now: Date.now()
+        now: Date.now(),
+        scoped: scope.scoped,
+        others: scope.others
       });
     },
     refresh: () => sandboxes.get(true),
@@ -1525,9 +1802,6 @@ var eventRoutes = (deps) => [
   })
 ];
 
-// service/project/scope.ts
-var scopeToProject = (sandboxes) => sandboxes;
-
 // service/routes/sandboxes.ts
 var summaryOf = (sandbox) => ({
   id: sandbox.id,
@@ -1546,11 +1820,17 @@ var isLifecycleAction = (action) => action === "stop" || action === "resume" || 
 var sandboxRoutes = (deps) => [
   route("GET", "/sandboxes", async (context) => {
     const snapshot = await deps.sandboxes.get();
-    const scoped = scopeToProject(snapshot.sandboxes, { directory: context.search.get("directory") });
+    const scope = await deps.scoper.apply(snapshot.sandboxes, context.search.get("directory"));
+    const ordered = [...scope.entries].sort((left, right) => Number(right.inProject) - Number(left.inProject));
     const body = {
-      sandboxes: scoped.map(summaryOf),
+      sandboxes: ordered.map((entry) => ({
+        ...summaryOf(entry.sandbox),
+        matchedBy: entry.matchedBy,
+        inProject: entry.inProject
+      })),
       error: snapshot.failure?.text ?? null,
-      now: Date.now()
+      now: Date.now(),
+      projectScoped: scope.scoped
     };
     return context.reply(200, body);
   }),
@@ -1602,7 +1882,7 @@ var scheduleRoutes = (options) => [
 var statusRoutes = (deps) => [
   route("GET", "/status", async (context) => {
     try {
-      return context.reply(200, await deps.statusView());
+      return context.reply(200, await deps.statusView(context.search.get("directory")));
     } catch (failure) {
       return context.reply(200, {
         rows: [{ kind: "note", id: "note-error", text: describeFailure(failure).text, tone: "error" }]

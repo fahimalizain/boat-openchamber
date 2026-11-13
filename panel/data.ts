@@ -93,8 +93,13 @@ export const createLoaders = (deps: {
   const sandboxes = async (): Promise<void> => {
     const state = cell.get();
     const data = await client.sandboxes(state.directory);
+    state.projectScoped = data.projectScoped;
     const stillThere = state.sandboxId !== null && data.sandboxes.some((entry) => entry.id === state.sandboxId);
-    const nextId = stillThere ? state.sandboxId : (data.sandboxes[0]?.id ?? null);
+    const nextId = stillThere
+      ? state.sandboxId
+      : data.projectScoped
+        ? (data.sandboxes.find((entry) => entry.inProject)?.id ?? null)
+        : (data.sandboxes[0]?.id ?? null);
     const changed = nextId !== state.sandboxId;
 
     state.sandboxes = data.sandboxes;

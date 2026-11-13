@@ -2,6 +2,7 @@
 import type { AgentProvider } from './agent.ts';
 import type {
   Conversation,
+  ProjectMatch,
   SandboxAction,
   SandboxActionVerb,
   SandboxSummary,
@@ -13,10 +14,17 @@ export type OkBody = { ok: true };
 
 export const errorBody = (error: string): ErrorBody => ({ error });
 
+export type ScopedSandboxSummary = SandboxSummary & {
+  matchedBy: ProjectMatch | null;
+  inProject: boolean;
+};
+
 export type SandboxesResponse = {
-  sandboxes: SandboxSummary[];
+  sandboxes: ScopedSandboxSummary[];
   error: string | null;
   now: number;
+  /** True when a project directory was usable and the list is scoped to it. */
+  projectScoped: boolean;
 };
 
 export type ConversationsResponse = {

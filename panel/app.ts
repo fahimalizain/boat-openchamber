@@ -32,6 +32,7 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
 
   const header = createSandboxHeader(
     {
+      groups: byId('sandbox-groups'),
       select: byId('sandbox-select'),
       meta: byId('sandbox-meta'),
       actions: byId('sandbox-actions'),

@@ -15,6 +15,29 @@ Settings → Extensions, or with this link in the desktop app:
 [Install Boat](openchamber://extensions/install?url=https%3A%2F%2Fgithub.com%2Ffahimalizain%2Fboat-openchamber)
 ```
 
+## Project scoping
+
+With a project open, the Work Status section gets the project directory, and the
+panel sends it with `/sandboxes`. A sandbox belongs to that project when, in
+priority order:
+
+1. It has an `openchamber.project` label naming the project — either the
+   `owner/repo` slug or the folder name, case-insensitive. Boat label keys may
+   contain dots, so the key is set at create or fork time.
+2. Its boat environment attaches the project's repository. Remotes from
+   `git -C <dir> remote` (origin first) are normalized to `owner/repo`, so ssh,
+   https, a `.git` suffix and case all compare equal.
+3. Its environment name equals the project folder name, case-insensitive.
+
+The section shows the project's sandboxes plus a muted "N other sandboxes"
+note; the panel groups them under "This project" and "Other sandboxes", and
+defaults to the first project sandbox. With no project, everything shows as
+before.
+
+Only environment names and repository full names are read from `boat env list`.
+Secret files, variables and setup scripts are dropped at the adapter boundary —
+they are never logged, cached, emitted or returned.
+
 ## Layout
 
 ```
@@ -30,13 +53,13 @@ service/
   boat.ts          the CLI adapter: binary, argv, JSON
   http.ts          request context and replies
   router.ts        exact method/path table
-  context.ts       composition root: caches, followers, status view
+  context.ts       composition root: caches, scoper, followers, status view
   warm.ts          what runs after every sandbox refresh
   followers.ts     one `boat events --follow` per watched conversation
-  instructions.ts  keeps the agent-facing text current
-  project/scope.ts the project matcher seam for phase 2.5
-  domain/          typed CLI reads and commands (sandboxes, conversations, events, agent, limits)
-  data/            caches behind small interfaces (sandbox list, conversations, desktop, agents, plan note)
+  instructions.ts  keeps the agent-facing text current, globally and per project
+  project/         slug normalisation, the matcher, git remotes, the scoper
+  domain/          typed CLI reads and commands (sandboxes, conversations, events, agent, environments, limits)
+  data/            caches behind small interfaces (sandbox list, conversations, desktop, agents, environments, plan note)
   status/          the Work Status section (view, instruction text, row actions)
   routes/          one module per route group (status, sandboxes, conversations, events, agent, schedule)
 
@@ -70,6 +93,10 @@ panel/
   new events to the panel in batches. Nothing replays, so the panel reads the
   history first and de-duplicates by event id. The follower stops when the panel
   unwatches, after two minutes without a ping, or when the service stops.
+- **Project scoping** — with a project open, the section and the panel show that
+  project's sandboxes and say how many others exist. A sandbox joins a project by
+  its `openchamber.project` label, else by a repository its boat environment
+  attaches, else by the environment name matching the folder.
 - **Work Status section "Boat"** — one line per sandbox, polled every 5 seconds,
   with Stop, Extend 1h, Desktop and Resume, a badge when an agent is running,
   and rows that say what to do when there are no sandboxes, the CLI is missing,
@@ -92,8 +119,9 @@ background and cached for five minutes.
 ## Development
 
 ```sh
-npm run build   # bundle service/main.ts -> service/main.js
+npm run build   # bundle service/main.ts -> service/main.js and panel/main.ts -> panel/main.js
 npm run check   # validate the package
+npm test        # unit-test the project matcher
 ```
 
 The built `service/main.js` and `panel/main.js` are committed: installing an

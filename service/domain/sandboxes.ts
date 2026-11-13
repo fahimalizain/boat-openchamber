@@ -5,6 +5,16 @@ import { runBoat } from '../boat.ts';
 
 const MUTATION_TIMEOUT_MS = 25_000;
 
+const readLabels = (value: unknown): Record<string, string> => {
+  if (!isRecord(value)) return {};
+  const labels: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const text = readString(entry);
+    if (text) labels[key] = text;
+  }
+  return labels;
+};
+
 const toSandbox = (row: Record<string, unknown>): Sandbox | null => {
   const id = readString(row.id);
   if (!id) return null;
@@ -24,6 +34,7 @@ const toSandbox = (row: Record<string, unknown>): Sandbox | null => {
     environment: readString(row.environment),
     health: readString(row.health),
     sshEndpoint: readString(row.sshEndpoint),
+    labels: readLabels(row.labels),
   };
 };
 

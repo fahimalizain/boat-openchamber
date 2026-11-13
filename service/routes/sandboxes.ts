@@ -7,11 +7,10 @@ import {
 import type { Sandbox, SandboxAction, SandboxSummary } from '../../shared/types.ts';
 import type { ServiceContext } from '../context.ts';
 import { describeFailure } from '../failures.ts';
-import { scopeToProject } from '../project/scope.ts';
 import { route, type Route } from '../router.ts';
 import { isSandboxId } from '../validation.ts';
 
-type Deps = Pick<ServiceContext, 'sandboxes' | 'desktop' | 'perform' | 'refresh' | 'forget'>;
+type Deps = Pick<ServiceContext, 'sandboxes' | 'scoper' | 'desktop' | 'perform' | 'refresh' | 'forget'>;
 
 const summaryOf = (sandbox: Sandbox): SandboxSummary => ({
   id: sandbox.id,
@@ -34,11 +33,19 @@ const isLifecycleAction = (action: SandboxAction): action is 'stop' | 'resume' |
 export const sandboxRoutes = (deps: Deps): Route[] => [
   route('GET', '/sandboxes', async (context) => {
     const snapshot = await deps.sandboxes.get();
-    const scoped = scopeToProject(snapshot.sandboxes, { directory: context.search.get('directory') });
+    const scope = await deps.scoper.apply(snapshot.sandboxes, context.search.get('directory'));
+    const ordered = [...scope.entries].sort(
+      (left, right) => Number(right.inProject) - Number(left.inProject),
+    );
     const body: SandboxesResponse = {
-      sandboxes: scoped.map(summaryOf),
+      sandboxes: ordered.map((entry) => ({
+        ...summaryOf(entry.sandbox),
+        matchedBy: entry.matchedBy,
+        inProject: entry.inProject,
+      })),
       error: snapshot.failure?.text ?? null,
       now: Date.now(),
+      projectScoped: scope.scoped,
     };
     return context.reply(200, body);
   }),

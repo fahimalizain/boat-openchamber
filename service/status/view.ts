@@ -128,13 +128,17 @@ const desktopChip = (sandbox: Sandbox, desktopUrls: Map<string, string | null>):
   };
 };
 
-type StatusViewInput = {
+export type StatusViewInput = {
   sandboxes: Sandbox[];
   desktopUrls: Map<string, string | null>;
   agents: ReadonlySet<string>;
   failure: Failure | null;
   planNote: string | null;
   now: number;
+  /** True when the rows are only the open project's sandboxes. */
+  scoped: boolean;
+  /** Sandboxes hidden because they belong to another project. */
+  others: number;
 };
 
 const orderOf = (sandbox: Sandbox): number => {
@@ -155,8 +159,19 @@ export const buildStatusView = (input: StatusViewInput): GuestStatusView => {
     notes.push({
       kind: 'note',
       id: 'note-empty',
-      text: 'No sandboxes. Create one with `boat new`, then reopen this section.',
+      text: input.scoped
+        ? 'No sandbox for this project. Pin one with the `openchamber.project` label, or add this repository to its boat environment.'
+        : 'No sandboxes. Create one with `boat new`, then reopen this section.',
       tone: 'info',
+    });
+  }
+
+  if (input.scoped && input.others > 0) {
+    notes.push({
+      kind: 'note',
+      id: 'note-others',
+      text: `${input.others} other sandbox${input.others === 1 ? '' : 'es'} in other projects.`,
+      tone: 'muted',
     });
   }
 
