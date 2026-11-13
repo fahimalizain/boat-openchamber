@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3 — 2026-11-13
+
+- The composer's Agent, Model and Reasoning selects sit in one horizontal row
+  above the textarea, labels included, and wrap to full-width on a narrow panel.
+  The composer no longer shrinks below its content, so the textarea cannot sit
+  under the row; the separate “New conversation” hint is gone (Reply and Steer
+  keep theirs).
+
 ## 0.3.2 — 2026-11-13
 
 - Fixed the panel against the real CLI output: every JSONL reader now unwraps the

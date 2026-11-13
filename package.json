@@ -1,6 +1,6 @@
 {
   "name": "boat-openchamber",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "boat.dev sandboxes in OpenChamber: Work Status rows, a rail panel for live agent conversations, and @ mentions.",
   "license": "MIT",
   "author": "Fahim Ali Zain",

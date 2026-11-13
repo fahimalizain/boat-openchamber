@@ -74,11 +74,13 @@ export const createComposer = (
     const busy = state.busy;
 
     roots.providerRow.hidden = open;
-    roots.hint.textContent = !state.sandboxId
+    const hint = !state.sandboxId
       ? 'Create a sandbox with `boat new` to start.'
       : open
         ? running ? 'Steer the running turn' : 'Reply'
-        : 'New conversation';
+        : '';
+    roots.hint.textContent = hint;
+    roots.hint.hidden = hint === '';
 
     if (!open) {
       const agents = sortAgents(state.agents);

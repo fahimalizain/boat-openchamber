@@ -97,10 +97,23 @@
   .tool-name { color: var(--oc-fg, inherit); flex: 0 0 auto; }
   .tool.failed .tool-name { color: var(--oc-error-text, #dc2626); }
   .tool-detail { overflow: hidden; text-overflow: ellipsis; }
-  .composer { border-top: 1px solid var(--oc-border, rgba(127, 127, 127, .25)); padding: 8px 12px 12px; }
-  .hint { font-size: 11px; color: var(--oc-muted, inherit); margin-bottom: 6px; }
-  .provider-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
-  .provider-row > #provider-select { grid-column: 1 / -1; }
+  .composer {
+    border-top: 1px solid var(--oc-border, rgba(127, 127, 127, .25));
+    padding: 8px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+  .composer .row { margin-top: 0; }
+  .hint { font-size: 11px; color: var(--oc-muted, inherit); }
+  .provider-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 6px;
+  }
+  .provider-row > * { flex: 1 1 110px; min-width: 0; }
   .composer-actions { margin-left: auto; }
 
   /* Phone: one column, touch targets, the list and the chat swapped. */
@@ -126,7 +139,7 @@
     display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
   }
   html[data-layout="compact"] .conv-list { max-height: none; flex: 1 1 auto; }
-  html[data-layout="compact"] .provider-row { grid-template-columns: 1fr; }
+  html[data-layout="compact"] .provider-row > * { flex: 1 1 100%; }
   html[data-layout="compact"] .composer,
   html[data-layout="compact"] .create {
     padding-bottom: calc(12px + var(--safe-bottom, 0px) + var(--keyboard-inset, 0px));
@@ -144,6 +157,11 @@
   body[data-create="true"] #root .chat-wrap,
   body[data-create="true"] #root .composer,
   body[data-create="true"] #root .compact-nav { display: none; }
+
+  /* A narrow panel stacks the agent row even without the phone layout. */
+  @media (max-width: 380px) {
+    .provider-row > * { flex: 1 1 100%; }
+  }
 </style>
 </head>
 <body>
