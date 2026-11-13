@@ -1,0 +1,56 @@
+{
+  "name": "boat-openchamber",
+  "version": "1.0.0",
+  "description": "Manage boat.dev cloud sandboxes from OpenChamber's Work Status panel.",
+  "license": "MIT",
+  "author": "Fahim Ali Zain",
+  "homepage": "https://github.com/fahimalizain/boat-openchamber#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fahimalizain/boat-openchamber.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fahimalizain/boat-openchamber/issues"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "npx -y bun@latest x openchamber-guest-bundle --node service/main.ts service/main.js",
+    "check": "npx -y bun@latest x openchamber-guest-check"
+  },
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=2.7.0"
+    },
+    "id": "boat",
+    "name": "Boat",
+    "icon": "icon.svg",
+    "contributes": {
+      "service": {
+        "entry": "service/main.js",
+        "runtime": "host",
+        "permissions": {
+          "exec": ["boat"]
+        },
+        "schedule": [{
+          "id": "refresh",
+          "cron": "*/15 * * * *"
+        }]
+      },
+      "statusSection": {
+        "source": {
+          "path": "/status",
+          "interval": 5000
+        },
+        "title": "Boat"
+      },
+      "instructions": true
+    }
+  },
+  "dependencies": {
+    "@openchamber/sdk": "2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "24"
+  }
+}
