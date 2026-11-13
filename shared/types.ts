@@ -1,4 +1,4 @@
-/** The one shape of a sandbox, a conversation and an agent event both sides use. */
+/** The sandbox shape both sides use, plus its state and action vocabularies. */
 
 export type Sandbox = {
   id: string;
@@ -27,40 +27,6 @@ export type SandboxSummary = Pick<
   Sandbox,
   'id' | 'name' | 'state' | 'type' | 'vcpu' | 'memoryGB' | 'environment' | 'ttlSeconds' | 'archiveAfter' | 'stoppedAt' | 'desktopAvailable'
 >;
-
-export type Conversation = {
-  id: string;
-  createdAt: string | null;
-  lastPromptAt: string | null;
-  prompts: number;
-  running: boolean;
-  lastHarness: string | null;
-  lastModel: string | null;
-  lastPromptPreview: string | null;
-  current: boolean;
-};
-
-export type UiTool = {
-  name: string;
-  /** One line: a shell command, a path, or a short JSON preview. */
-  detail: string;
-  isError: boolean;
-};
-
-export type UiEvent = {
-  id: string;
-  type: string;
-  role: 'user' | 'assistant' | 'system';
-  /** Epoch milliseconds. */
-  at: number;
-  text: string;
-  streaming: boolean;
-  model: string | null;
-  status: string | null;
-  tools: UiTool[];
-  error: string | null;
-  conversationId: string | null;
-};
 
 /** How a sandbox was tied to an OpenChamber project, in priority order. */
 export type ProjectMatch = 'label' | 'repo' | 'name';

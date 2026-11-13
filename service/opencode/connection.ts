@@ -26,6 +26,8 @@ export type OpencodeConnection = {
 
 export type OpencodeConnections = {
   get: (sandboxId: string, options?: { force?: boolean }) => Promise<OpencodeConnection>;
+  /** The established connection, without starting one. */
+  peek: (sandboxId: string) => OpencodeConnection | null;
   run: <T>(sandboxId: string, operation: (connection: OpencodeConnection) => Promise<T>) => Promise<T>;
   invalidate: (sandboxId: string) => void;
   forget: (sandboxId: string) => void;
@@ -147,6 +149,10 @@ export const createOpencodeConnections = (options: { ttlMs?: number } = {}): Ope
 
   return {
     get,
+    peek: (sandboxId) => {
+      const cached = entries.get(sandboxId);
+      return cached && Date.now() - cached.at < ttlMs ? cached.connection : null;
+    },
     invalidate,
     forget: invalidate,
     run: async (sandboxId, operation) => {

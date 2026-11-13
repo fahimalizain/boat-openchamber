@@ -1,6 +1,6 @@
 /**
  * The `boat` CLI adapter: binary lookup, argv execution, JSON parsing. It knows
- * nothing about sandboxes or conversations.
+ * nothing about sandboxes or OpenCode.
  */
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { accessSync, constants as fsConstants } from 'node:fs';
@@ -29,7 +29,7 @@ export const MISSING_CLI_MESSAGE =
 const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
-/** JSON, or JSONL as `boat prompt`, `boat events` and `boat conversations` print it. */
+/** JSON, or JSONL as create and fork progress prints it. */
 export const parseBoatJson = (output: string): unknown => {
   const text = output.trim();
   if (!text) return null;
@@ -60,10 +60,10 @@ export type BoatLine = {
 };
 
 /**
- * Several commands wrap each JSONL line as `{ event, data }` (conversations,
- * events, prompt, new). Unwrap once here; flat lines pass through unchanged.
- * An event's own `data` field does not make it an envelope: the wrapper always
- * carries an `event` name.
+ * Some commands wrap each JSONL line as `{ event, data }` (`boat new`, create
+ * progress). Unwrap once here; flat lines pass through unchanged. An event's
+ * own `data` field does not make it an envelope: the wrapper always carries an
+ * `event` name.
  */
 export const readBoatLine = (raw: unknown): BoatLine | null => {
   if (!isRecord(raw)) return null;
@@ -164,7 +164,7 @@ export const runBoat = async (command: string, args: string[], options: RunOptio
   return parseBoatJson(stdout);
 };
 
-/** Starts a streaming command (`events --follow`, `prompt`) the service reads line by line. */
+/** Starts a streaming command (`boat new`, `boat fork`) the service reads line by line. */
 export const spawnBoat = (command: string, args: string[]): ChildProcess => (
   spawn(requireBinary(), [command, '--json', '--no-update', ...args], {
     env: boatEnv(),

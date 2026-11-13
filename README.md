@@ -1,8 +1,8 @@
 # Boat for OpenChamber
 
 Your [boat.dev](https://boat.dev) cloud sandboxes inside OpenChamber: a Work
-Status section, a rail panel for the agents running on them, and `@` mentions for
-their conversations.
+Status section, a rail panel for the OpenCode sessions running on them, and `@`
+mentions for those sessions.
 
 <!-- Screenshot: the Boat section in Work Status and the rail panel. -->
 _Screenshot coming soon._
@@ -11,6 +11,8 @@ _Screenshot coming soon._
 
 - OpenChamber 2.7.1 or newer (web, desktop and the phone; VS Code loads no extensions).
 - The [boat CLI](https://docs.boat.dev) on the same machine, signed in — `boat status` should answer.
+- OpenCode in the sandbox: boat's environments ship it, and the extension starts
+  its background service on demand.
 - `git` on PATH, used to read a project's remote for scoping.
 
 ## Install
@@ -23,20 +25,21 @@ add `https://github.com/fahimalizain/boat-openchamber` in **Settings → Extensi
 ## What you get
 
 **Work Status section "Boat"** — one line per sandbox with state, size and time
-left, a badge while an agent works, and Stop, Extend 1h, Desktop or Resume on the
-row. Scoped to the open project, with a muted note for the sandboxes in others.
+left, a badge while one of the sandbox's OpenCode sessions is busy, and Stop,
+Extend 1h, Desktop or Resume on the row. Scoped to the open project, with a muted
+note for the sandboxes in others.
 
 **Rail panel** — two tabs. **Sandboxes** lists the project's sandboxes and the
 others, one row each with state, size, environment and auto-stop time; Stop or
 Resume is on the row, with Extend, Desktop, OpenCode and Copy in its menu, and
-clicking the row opens its conversations. **OpenCode** starts OpenCode's server in
-the sandbox if it is not running, hosts it on a private boat URL and opens its web
-UI already signed in; each click mints a fresh one-time link. **Conversations** has a compact sandbox switcher, a
-Resume banner when the sandbox is stopped, and the chat itself: a new
-conversation with an agent and model from boat's own catalogue (and a reasoning
-level where the model has one), a reply in an idle one, or a steer and an
-interrupt while a turn runs. Replies continue the conversation's own harness and
-model. New events arrive live; a running turn also polls as a fallback. Every
+clicking the row opens its OpenCode sessions. **Sessions** talks to the sandbox's
+own OpenCode server: a dense session list with a directory filter, the session's
+transcript with collapsed reasoning and tool rows that expand in place, inline
+permission and question cards, and a composer that picks the agent, model and
+reasoning level. A line under the list names the open session's status, folder
+and agent, and the live badge shows the event relay. **OpenCode** starts the
+sandbox's server if it is not running, hosts it on a private boat URL and opens
+its web UI already signed in; each click mints a fresh one-time link. Every
 action ends in a toast, and failures show a banner.
 
 **New sandboxes** — the panel's **New sandbox** button opens a form with two
@@ -48,22 +51,23 @@ hours. Copies are renamed after they start because `boat fork` has no name flag.
 Creation runs in the background and the new sandbox appears selected when it is
 ready. **Copy** on the selected sandbox opens the same form preset to a copy.
 
-**`@` mentions** — type `@` in the composer and pick under **Sandboxes**: a
-conversation becomes a compact transcript (prompts, answers, one line per tool
-call, errors) and a sandbox becomes a summary with its conversation list. The
+**`@` mentions** — type `@` in the composer and pick under **Sandboxes**: an
+OpenCode session becomes a compact transcript (prompts, answers, one line per
+tool call, errors) and a sandbox becomes a summary with its session list. The
 agent gets the text, not the window.
 
 **Agent instructions** — every session learns the sandbox ids, names and states,
-plus the `boat exec` / `boat prompt` one-liners. With a project open, the project's
+plus the `boat exec <id> -- <command>` one-liner and where the sandbox agents
+live (the Boat panel's Sessions tab). With a project open, the project's
 sandboxes are named first in their own scoped instructions.
 
 **Sidebar marks** — each registered project with sandboxes carries a small anchor
-on its rows: green while a sandbox is up or an agent works, muted when only
-stopped sandboxes remain, with a tooltip such as “2 sandboxes · 1 agent running”.
-The mark clears when the project has none.
+on its rows: green while a sandbox is up or an OpenCode session is busy, muted
+when only stopped sandboxes remain, with a tooltip such as “2 sandboxes · 1 agent
+running”. The mark clears when the project has none.
 
 **Phone** — the panel opts in on the phone (`panel.mobile`) and switches to a
-compact layout: one column, the conversation list and chat with a back
+compact layout: one column, the session list and transcript with a back
 button, touch-sized controls, and safe-area padding. The create form works the
 same at 360px.
 
@@ -90,13 +94,14 @@ from the panel and from the open Work Status directory, then kept in
 ## Privacy
 
 - Everything runs on this machine. The extension talks to boat.dev only through
-  the boat CLI, with the login you already have, plus the public agent/model
-  catalogue at `boat.dev/api/provider-models`; there is no other network call.
+  the boat CLI, with the login you already have; there is no other network call.
+- Sessions, messages and models come from the **sandbox's own OpenCode server**,
+  reached through a `boat host` port URL. OpenCode's password and boat's port
+  token stay inside the service's connection; neither is logged or returned to
+  the panel.
 - `boat env list` is read for environment names and repository full names only.
   Secret files, variables and setup scripts are dropped at the adapter boundary
   and never logged, cached, returned or emitted.
-- `boat ai profiles` is read for the default profile's `connected` credential
-  names only; keys, accounts and every other field are dropped.
 
 ## Development
 
@@ -104,7 +109,7 @@ from the panel and from the open Work Status directory, then kept in
 npm run build      # bundle service/main.ts and panel/main.ts
 npm run check      # validate the package
 npm run typecheck  # tsc --noEmit
-npm test           # matcher, mention rows, transcript
+npm test           # matcher, mention rows, create form, OpenCode normalisation
 ```
 
 The bundler and package checker are bun scripts. `scripts/bun.sh` uses a real
@@ -113,14 +118,15 @@ works. Installing an extension never builds it: `service/main.js` and
 `panel/main.js` are committed.
 
 ```
-shared/    sandbox, conversation and event shapes; route DTOs; transcript; time helpers
+shared/    sandbox shapes and state helpers; OpenCode shapes; route DTOs; time
 service/   main.ts wires HTTP; boat.ts is the CLI adapter; domain/ typed reads;
+           opencode/ connection, normalisation, reads, session cache and live relay;
            data/ caches and the project registry; project/ scoping; status/ section;
            mentions/ rows and text; create/ validation and the create job;
            marks/ mark computation and the marker; routes/ one module per route group
 panel/     main.ts bootstraps; api.ts client; state + data + actions + live + create
-           + preferences; device.ts picks the compact layout;
-           views/ header, conversation list, conversation, composer, create form, banner
+           + preferences; device.ts picks the compact layout; chat-model + catalog;
+           views/ header, session list, session, message, composer, create, banner
 ```
 
 CI (`.github/workflows/ci.yml`) installs, typechecks, tests, builds, runs the

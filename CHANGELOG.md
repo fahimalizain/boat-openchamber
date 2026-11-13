@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- The panel now drives each sandbox's **OpenCode server** instead of the boat
+  CLI: the Conversations tab became **Sessions**, with a dense session list and
+  directory filter, a live transcript (collapsed reasoning, tool rows that expand
+  in place), inline permission and question cards, and a composer for the agent,
+  model and reasoning level. New sessions land in the environment's repository
+  or the sandbox home.
+- The service keeps one authenticated connection per sandbox (boat's port token
+  plus OpenCode's password), relays OpenCode's event stream to the panel, and
+  rebuilds the connection once when it expires or the proxy refuses it.
+- The Work Status row badge, the sidebar marks and `agentRunning` now mean “an
+  OpenCode session in this sandbox is busy”. They only read sandboxes whose
+  OpenCode connection is already open, so a badge never starts a server by
+  itself.
+- `@` mentions list OpenCode sessions; a session resolves to its transcript, a
+  sandbox to its summary and session list.
+- Agent instructions teach `boat exec <id> -- <command>` and point at the panel
+  for sandbox agents; the `boat prompt` / `steer` / `interrupt` teaching, the
+  conversation routes, the boat event relay and boat's agent catalogue are gone.
+- The session list shows whole rows (four at a time) above a divider, and the
+  directory filter only lists sessions whose own directory matches.
 - **OpenCode** in a running sandbox's row menu opens the sandbox's own OpenCode
   web UI in a browser tab. It starts OpenCode's background service when needed,
   hosts its port on a token-gated boat URL, and signs in with a one-time

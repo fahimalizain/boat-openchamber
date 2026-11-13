@@ -5,7 +5,7 @@ import { isUpState, type Sandbox } from '../../shared/types.ts';
 const TEXT_MAX = 4_000;
 const SANDBOXES_SHOWN = 12;
 
-const COMMANDS_LINE = 'Run commands with `boat exec <id> -- <command>`. Ask a sandbox agent with `boat prompt <id> --provider <claude|codex|opencode|pi|kimi|mistral|prime> --model <model> [--new | --resume <conversation>] "<text>"`; add to a running turn with `boat steer <id> --convo <conversation> "<text>"`, stop it with `boat interrupt <id>`. Pass `--json --no-update` to every command.';
+const COMMANDS_LINE = 'Run commands inside a sandbox with `boat exec <id> -- <command>`. Sandbox agents run in each sandbox\'s OpenCode server; drive them from the Boat panel — the Sessions tab, or the row menu\'s OpenCode item.';
 
 const sizeOf = (sandbox: Sandbox): string => {
   const parts = [sandbox.type, sandbox.memoryGB === null ? null : `${sandbox.memoryGB} GB`].filter(Boolean);

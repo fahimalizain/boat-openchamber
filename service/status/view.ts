@@ -131,7 +131,8 @@ const desktopChip = (sandbox: Sandbox, desktopUrls: Map<string, string | null>):
 export type StatusViewInput = {
   sandboxes: Sandbox[];
   desktopUrls: Map<string, string | null>;
-  agents: ReadonlySet<string>;
+  /** Sandbox ids with a busy OpenCode session. */
+  busy: ReadonlySet<string>;
   failure: Failure | null;
   planNote: string | null;
   now: number;
@@ -182,7 +183,7 @@ export const buildStatusView = (input: StatusViewInput): GuestStatusView => {
   const lines: LineRow[] = input.sandboxes
     .slice()
     .sort((left, right) => {
-      const byAgent = Number(input.agents.has(right.id)) - Number(input.agents.has(left.id));
+      const byAgent = Number(input.busy.has(right.id)) - Number(input.busy.has(left.id));
       if (byAgent !== 0) return byAgent;
       const byState = orderOf(left) - orderOf(right);
       if (byState !== 0) return byState;
@@ -198,7 +199,7 @@ export const buildStatusView = (input: StatusViewInput): GuestStatusView => {
         tooltip: tooltipOf(sandbox, input.now),
         actions: actionsOf(sandbox),
       };
-      if (input.agents.has(sandbox.id)) row.badge = { label: 'agent running', tone: 'accent' };
+      if (input.busy.has(sandbox.id)) row.badge = { label: 'agent running', tone: 'accent' };
       const chip = desktopChip(sandbox, input.desktopUrls);
       if (chip) row.content = { kind: 'chips', chips: [chip] };
       return row;

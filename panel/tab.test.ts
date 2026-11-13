@@ -20,6 +20,5 @@ test('without a stored tab, no sessions means Sandboxes', () => {
 test('only the two tab ids are accepted', () => {
   assert.equal(isPanelTab('sandboxes'), true);
   assert.equal(isPanelTab('sessions'), true);
-  assert.equal(isPanelTab('conversations'), false);
   assert.equal(isPanelTab('settings'), false);
 });

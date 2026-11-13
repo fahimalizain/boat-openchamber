@@ -9,15 +9,7 @@ import type {
   OpencodeQuestionRequest,
   OpencodeSession,
 } from './opencode.ts';
-import type {
-  Conversation,
-  ProjectMatch,
-  SandboxAction,
-  SandboxActionVerb,
-  SandboxSize,
-  SandboxSummary,
-  UiEvent,
-} from './types.ts';
+import type { ProjectMatch, SandboxAction, SandboxActionVerb, SandboxSize, SandboxSummary } from './types.ts';
 
 export type ErrorBody = { error: string };
 export type OkBody = { ok: true };
@@ -27,7 +19,7 @@ export const errorBody = (error: string): ErrorBody => ({ error });
 export type ScopedSandboxSummary = SandboxSummary & {
   matchedBy: ProjectMatch | null;
   inProject: boolean;
-  /** True while one of the sandbox's conversations has a turn running. */
+  /** True while one of the sandbox's OpenCode sessions has a turn running. */
   agentRunning: boolean;
 };
 
@@ -37,17 +29,6 @@ export type SandboxesResponse = {
   now: number;
   /** True when a project directory was usable and the list is scoped to it. */
   projectScoped: boolean;
-};
-
-export type ConversationsResponse = {
-  conversations: Conversation[];
-  now: number;
-};
-
-export type HistoryResponse = {
-  events: UiEvent[];
-  running: boolean | null;
-  now: number;
 };
 
 export type CreateStartKind = 'clean' | 'snapshot' | 'copy';
@@ -111,52 +92,6 @@ export type ProjectsRequest = {
   /** The registered OpenChamber projects, as the panel sees them. */
   directories: string[];
 };
-
-export type AgentReasoning = {
-  supported: string[];
-  default: string | null;
-};
-
-export type AgentModel = {
-  id: string;
-  label: string;
-  available: boolean;
-  reasoning: AgentReasoning | null;
-  fast: boolean;
-};
-
-export type AgentDto = {
-  provider: string;
-  label: string;
-  order: number;
-  available: boolean;
-  models: AgentModel[];
-};
-
-export type WatchRequest = { sandbox: string; conversation: string };
-export type UnwatchRequest = WatchRequest;
-
-export type PromptRequest = {
-  sandbox: string;
-  text: string;
-  /** Continue this conversation; omitted starts a new one. */
-  conversation?: string;
-  provider?: string;
-  model?: string;
-  reasoning?: string;
-};
-
-export type PromptResponse = OkBody & PromptStart;
-
-export type PromptStart = {
-  /** The conversation the prompt went to, when the CLI printed it in time. */
-  conversationId: string | null;
-  /** True when the turn is still running and the CLI was left to finish it. */
-  pending: boolean;
-};
-
-export type SteerRequest = { sandbox: string; conversation: string; text: string };
-export type InterruptRequest = { sandbox: string; conversation: string };
 
 export type ActionRequest = { sandbox: string; action: SandboxAction };
 export type ActionResponse = OkBody & { url?: string };

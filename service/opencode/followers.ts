@@ -2,7 +2,7 @@
  * One OpenCode SSE subscription per sandbox the panel watches. Events are
  * normalised, batched and forwarded on `boat:opencode`; nothing is kept for a
  * panel that is not looking. The follower's TTL is refreshed by the panel's
- * `/opencode/watch` calls, exactly like the old conversation followers.
+ * `/opencode/watch` calls, and a silent watcher is swept away.
  */
 import type { OpencodeEventsPayload, OpencodeStreamEvent, OpencodeStreamState } from '../../shared/opencode.ts';
 import { OPENCODE_EVENTS_TOPIC, OPENCODE_STREAM_TOPIC } from '../../shared/opencode.ts';
@@ -211,4 +211,22 @@ export const createOpencodeFollowers = (options: {
       for (const follower of [...followers.values()]) dispose(follower);
     },
   };
+};
+
+/** Kills every relay when the service itself is going away. */
+export const installFollowerCleanup = (
+  followers: OpencodeFollowers,
+  others: Array<{ stopAll: () => void }> = [],
+): void => {
+  const stopAll = (): void => {
+    followers.stopAll();
+    for (const other of others) other.stopAll();
+  };
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(signal, () => {
+      stopAll();
+      process.exit(0);
+    });
+  }
+  process.on('exit', stopAll);
 };

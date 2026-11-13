@@ -1,4 +1,4 @@
-/** The composer's `@` menu: sandboxes and their cached conversations. */
+/** The composer's `@` menu: sandboxes and their cached OpenCode sessions. */
 import {
   MENTIONS_RESOLVE_PATH,
   MENTIONS_SEARCH_PATH,
@@ -12,14 +12,13 @@ import {
 import { readString } from '../../shared/json.ts';
 import { isUpState } from '../../shared/types.ts';
 import type { ServiceContext } from '../context.ts';
-import { listConversations } from '../domain/conversations.ts';
-import { listEvents } from '../domain/events.ts';
 import { describeFailure } from '../failures.ts';
-import { renderConversationMention, renderSandboxMention } from '../mentions/render.ts';
+import { renderSandboxMention, renderSessionMention } from '../mentions/render.ts';
 import { mentionRows, parseMentionId } from '../mentions/rows.ts';
+import { readSession, readSessionMessages } from '../opencode/reads.ts';
 import { route, type Route } from '../router.ts';
 
-type Deps = Pick<ServiceContext, 'sandboxes' | 'conversations' | 'agents' | 'ranking'>;
+type Deps = Pick<ServiceContext, 'sandboxes' | 'sessions' | 'opencode' | 'ranking'>;
 
 export const mentionRoutes = (deps: Deps): Route[] => [
   route('POST', MENTIONS_SEARCH_PATH, async (context) => {
@@ -30,12 +29,12 @@ export const mentionRoutes = (deps: Deps): Route[] => [
       // The list is cached for a few seconds; a cold service pays one `boat list`.
       const snapshot = deps.sandboxes.peek() ?? await deps.sandboxes.get();
       for (const sandbox of snapshot.sandboxes) {
-        if (isUpState(sandbox.state)) deps.agents.check(sandbox.id);
+        if (isUpState(sandbox.state)) deps.sessions.check(sandbox.id);
       }
 
       const items: MentionsItem[] = mentionRows({
         sandboxes: snapshot.sandboxes,
-        conversations: (sandboxId) => deps.conversations.peek(sandboxId),
+        sessions: (sandboxId) => deps.sessions.peek(sandboxId),
         projectIds: directory ? deps.ranking.projectIds(directory) : null,
         query: readString(body?.query) ?? '',
       });
@@ -59,21 +58,23 @@ export const mentionRoutes = (deps: Deps): Route[] => [
     try {
       if (mention.kind === 'sandbox') {
         if (!sandbox) return context.reply(404, { error: 'That sandbox is not in the list any more.' });
-        const conversations = deps.conversations.peek(sandbox.id) ?? await listConversations(sandbox.id);
-        const answer: MentionsResolveResult = { text: renderSandboxMention(sandbox, conversations) };
+        const sessions = deps.sessions.peek(sandbox.id) ?? await deps.sessions.get(sandbox.id);
+        const answer: MentionsResolveResult = { text: renderSandboxMention(sandbox, sessions) };
         return context.reply(200, answer);
       }
 
-      const cached = deps.conversations.peek(mention.sandboxId);
-      const conversation = cached?.find((entry) => entry.id === mention.conversationId) ?? null;
-      const events = await listEvents(mention.sandboxId, mention.conversationId, { timeoutMs: 8_000 });
+      const history = await deps.opencode.run(mention.sandboxId, async (connection) => {
+        const session = await readSession(connection, mention.sessionId);
+        if (!session) throw new Error('That OpenCode session no longer exists.');
+        return { session, ...await readSessionMessages(connection, mention.sessionId) };
+      });
       const answer: MentionsResolveResult = {
-        text: renderConversationMention({
+        text: renderSessionMention({
           sandbox,
           sandboxId: mention.sandboxId,
-          conversationId: mention.conversationId,
-          conversation,
-          events,
+          sessionId: mention.sessionId,
+          session: history.session,
+          messages: history.messages,
         }),
       };
       return context.reply(200, answer);

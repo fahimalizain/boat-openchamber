@@ -5,8 +5,8 @@
 import type { ServiceMark } from '@openchamber/sdk';
 
 import type { ProjectRegistry } from '../data/project-registry.ts';
-import type { RunningAgents } from '../data/running-agents.ts';
 import type { SandboxSnapshot } from '../data/sandbox-list.ts';
+import type { OpencodeSessions } from '../opencode/sessions.ts';
 import type { Scoper } from '../project/scope.ts';
 import { buildProjectMark, changedMarks, type ProjectMark } from './mark.ts';
 
@@ -30,7 +30,7 @@ const isRateLimited = (failure: unknown): boolean => {
 export const createMarker = (deps: {
   projects: ProjectRegistry;
   scoper: Scoper;
-  agents: RunningAgents;
+  sessions: OpencodeSessions;
   setMark: (target: { directory: string }, mark: ServiceMark | null) => Promise<unknown>;
   now?: () => number;
 }): Marker => {
@@ -53,7 +53,7 @@ export const createMarker = (deps: {
       try {
         const scope = await deps.scoper.apply(snapshot.sandboxes, directory);
         const sandboxes = scope.entries.filter((entry) => entry.inProject).map((entry) => entry.sandbox);
-        next.set(directory, buildProjectMark(sandboxes, deps.agents.all()));
+        next.set(directory, buildProjectMark(sandboxes, deps.sessions.busyAll()));
       } catch {
         // Leave this project's mark as it was; the next refresh retries.
         const current = previous.get(directory);

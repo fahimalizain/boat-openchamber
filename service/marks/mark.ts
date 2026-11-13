@@ -8,11 +8,11 @@ export type ProjectMark = Pick<ServiceMark, 'icon' | 'tone' | 'text'>;
 
 export const buildProjectMark = (
   sandboxes: Sandbox[],
-  agents: ReadonlySet<string>,
+  busy: ReadonlySet<string>,
 ): ProjectMark | null => {
   if (sandboxes.length === 0) return null;
 
-  const running = sandboxes.filter((sandbox) => agents.has(sandbox.id)).length;
+  const running = sandboxes.filter((sandbox) => busy.has(sandbox.id)).length;
   const up = sandboxes.some((sandbox) => isUpState(sandbox.state));
   const text = [
     `${sandboxes.length} sandbox${sandboxes.length === 1 ? '' : 'es'}`,

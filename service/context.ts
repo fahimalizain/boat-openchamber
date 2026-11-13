@@ -3,22 +3,18 @@ import type { GuestStatusView, ServiceMark } from '@openchamber/sdk';
 
 import type { Sandbox, SandboxActionVerb } from '../shared/types.ts';
 import { createCreateJobs, type CreateJobs } from './create/jobs.ts';
-import { createAgentCatalog, type AgentCatalogSource } from './data/agent-catalog.ts';
-import { createConnectedCredentials, type ConnectedCredentials } from './data/connected-credentials.ts';
 import { createEnvironmentList, type EnvironmentList } from './data/environment-list.ts';
-import { createConversationList, type ConversationList } from './data/conversation-list.ts';
 import { createDesktopLinks, type DesktopLinks } from './data/desktop-links.ts';
 import { createPlanNote, type PlanNote } from './data/plan-note.ts';
 import { createProjectRegistry, type ProjectRegistry } from './data/project-registry.ts';
-import { createRunningAgents, type RunningAgents } from './data/running-agents.ts';
 import { createSandboxList, type SandboxList, type SandboxSnapshot } from './data/sandbox-list.ts';
 import { listEnvironments } from './domain/environments.ts';
 import { listSandboxes, renameSandbox, spawnCreate } from './domain/sandboxes.ts';
-import { createFollowers, type EventSink, type Followers } from './followers.ts';
 import { createInstructionsWriter } from './instructions.ts';
 import { createMarker, type Marker } from './marks/marker.ts';
 import { createOpencodeConnections, type OpencodeConnections } from './opencode/connection.ts';
 import { createOpencodeFollowers, type OpencodeFollowers } from './opencode/followers.ts';
+import { createOpencodeSessions, type OpencodeSessions } from './opencode/sessions.ts';
 import { createProjectRanking, type ProjectRanking } from './project/ranking.ts';
 import { createRemoteCache, type RemoteCache } from './project/remotes.ts';
 import { createScoper, type Scoper } from './project/scope.ts';
@@ -29,17 +25,16 @@ import { createWarmer } from './warm.ts';
 
 export type ServiceHost = {
   setInstructions: (directory: string | null, text: string) => Promise<unknown>;
-  emit: EventSink;
+  emit: (topic: string, data: unknown) => Promise<unknown>;
   setMark: (target: { directory: string }, mark: ServiceMark | null) => Promise<unknown>;
 };
 
 export type ServiceContext = {
   sandboxes: SandboxList;
-  conversations: ConversationList;
   desktop: DesktopLinks;
-  agents: RunningAgents;
-  followers: Followers;
-  /** The sandbox OpenCode servers the new chat talks to. */
+  /** A sandbox's OpenCode sessions, cached, plus the busy set the badge reads. */
+  sessions: OpencodeSessions;
+  /** The sandbox OpenCode servers the panel talks to. */
   opencode: OpencodeConnections;
   opencodeFollowers: OpencodeFollowers;
   scoper: Scoper;
@@ -47,8 +42,6 @@ export type ServiceContext = {
   environments: EnvironmentList;
   remotes: RemoteCache;
   projects: ProjectRegistry;
-  catalog: AgentCatalogSource;
-  credentials: ConnectedCredentials;
   createJobs: CreateJobs;
   statusView: (directory: string | null) => Promise<GuestStatusView>;
   refresh: () => Promise<SandboxSnapshot>;
@@ -58,9 +51,9 @@ export type ServiceContext = {
 
 const TTL = {
   sandboxes: 4_000,
-  conversations: 2_000,
+  sessions: 3_000,
+  sessionCheck: 20_000,
   desktop: 5 * 60_000,
-  agents: 20_000,
   environments: 60_000,
   remotes: 5 * 60_000,
   limits: 5 * 60_000,
@@ -70,9 +63,7 @@ const TTL = {
 const FOLLOWERS = { ttlMs: 120_000, sweepMs: 30_000, flushMs: 250 } as const;
 
 export const createServiceContext = (host: ServiceHost): ServiceContext => {
-  const conversations = createConversationList({ ttlMs: TTL.conversations });
   const desktop = createDesktopLinks({ ttlMs: TTL.desktop });
-  const agents = createRunningAgents({ ttlMs: TTL.agents, conversations });
   const planNote = createPlanNote({ ttlMs: TTL.limits });
   const instructions = createInstructionsWriter({
     setInstructions: host.setInstructions,
@@ -83,20 +74,22 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
   const remotes = createRemoteCache({ ttlMs: TTL.remotes });
   const ranking = createProjectRanking();
   const scoper = createScoper({ environments, remotes, ranking });
-  const catalog = createAgentCatalog();
-  const credentials = createConnectedCredentials({ ttlMs: 60_000 });
   const projects = createProjectRegistry({
     file: process.env.BOAT_PROJECTS_FILE?.trim() || undefined,
   });
-  const marker: Marker = createMarker({ projects, scoper, agents, setMark: host.setMark });
+  const opencode = createOpencodeConnections();
+  const sessions = createOpencodeSessions({
+    connections: opencode,
+    ttlMs: TTL.sessions,
+    checkMs: TTL.sessionCheck,
+  });
+  const marker: Marker = createMarker({ projects, scoper, sessions, setMark: host.setMark });
 
   const sandboxes = createSandboxList({
     ttlMs: TTL.sandboxes,
     load: listSandboxes,
-    onSnapshot: createWarmer({ conversations, desktop, agents, planNote, instructions, marker }),
+    onSnapshot: createWarmer({ sessions, desktop, planNote, instructions, marker }),
   });
-  const followers = createFollowers({ sink: host.emit, ...FOLLOWERS });
-  const opencode = createOpencodeConnections();
   const opencodeFollowers = createOpencodeFollowers({
     connections: opencode,
     sink: host.emit,
@@ -104,8 +97,7 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
   });
 
   const forgetSandbox = (sandboxId: string): void => {
-    conversations.forget(sandboxId);
-    agents.forget(sandboxId);
+    sessions.forget(sandboxId);
     desktop.forget(sandboxId);
     opencode.forget(sandboxId);
     opencodeFollowers.unwatch(sandboxId);
@@ -129,10 +121,8 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
 
   return {
     sandboxes,
-    conversations,
     desktop,
-    agents,
-    followers,
+    sessions,
     opencode,
     opencodeFollowers,
     scoper,
@@ -140,8 +130,6 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
     environments,
     remotes,
     projects,
-    catalog,
-    credentials,
     createJobs,
     statusView: async (directory) => {
       const snapshot = await sandboxes.get();
@@ -158,7 +146,7 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
       return buildStatusView({
         sandboxes: visible.map((entry) => entry.sandbox),
         desktopUrls: desktop.all(),
-        agents: agents.all(),
+        busy: sessions.busyAll(),
         failure: snapshot.failure,
         planNote: planNote.current(),
         now: Date.now(),

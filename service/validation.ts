@@ -3,7 +3,6 @@ import { isRecord, readString } from '../shared/json.ts';
 import type { OpencodeModelRef } from '../shared/opencode.ts';
 
 export const SANDBOX_ID = /^[a-z]{2,8}_[a-z0-9]{4,40}$/;
-export const CONVERSATION_ID = /^[A-Za-z0-9_-]{1,64}$/;
 export const OPENCODE_SESSION_ID = /^ses_[A-Za-z0-9]{6,64}$/;
 export const OPENCODE_NAME = /^[A-Za-z0-9._:-]{1,100}$/;
 /** Model ids carry provider punctuation such as `claude-fable-5-1[1m]`. */
@@ -17,10 +16,6 @@ export const MAX_DIRECTORY_CHARS = 500;
 
 export const isSandboxId = (value: unknown): value is string => (
   typeof value === 'string' && SANDBOX_ID.test(value)
-);
-
-export const isConversationId = (value: unknown): value is string => (
-  typeof value === 'string' && CONVERSATION_ID.test(value)
 );
 
 export const isOpencodeSessionId = (value: unknown): value is string => (

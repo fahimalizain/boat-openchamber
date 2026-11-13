@@ -4,13 +4,9 @@ import http from 'node:http';
 import { createServiceHost, type JsonValue } from '@openchamber/sdk';
 
 import { createServiceContext } from './context.ts';
-import { installFollowerCleanup } from './followers.ts';
 import { createRequestContext, sendReply } from './http.ts';
-import { agentRoutes } from './routes/agent.ts';
-import { agentCatalogRoutes } from './routes/agents.ts';
-import { conversationRoutes } from './routes/conversations.ts';
+import { installFollowerCleanup } from './opencode/followers.ts';
 import { createRoutes } from './routes/create.ts';
-import { eventRoutes } from './routes/events.ts';
 import { mentionRoutes } from './routes/mentions.ts';
 import { opencodeCatalogRoutes } from './routes/opencode-catalog.ts';
 import { opencodeChatRoutes } from './routes/opencode-chat.ts';
@@ -44,11 +40,7 @@ const context = createServiceContext({
 const route = createRouter([
   ...statusRoutes(context),
   ...sandboxRoutes(context),
-  ...conversationRoutes(context),
-  ...eventRoutes(context),
   ...createRoutes(context),
-  ...agentRoutes(context),
-  ...agentCatalogRoutes(context),
   ...opencodeSessionRoutes(context),
   ...opencodeChatRoutes(context),
   ...opencodeCatalogRoutes(context),
@@ -89,7 +81,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, '127.0.0.1', () => {
-  installFollowerCleanup(context.followers, [context.opencodeFollowers]);
+  installFollowerCleanup(context.opencodeFollowers);
   // Sends the instructions once on start, then keeps them in step with the list.
   void context.refresh().catch(() => {});
 });

@@ -449,209 +449,6 @@ var createCreateJobs = (deps) => {
   return { busy: () => child !== null, start };
 };
 
-// service/data/agent-catalog.ts
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { dirname, join as join2 } from "node:path";
-var CATALOG_URL = "https://boat.dev/api/provider-models";
-var CATALOG_TTL_MS = 60 * 60000;
-var RETRY_MS = 60000;
-var DEFAULT_FILE = join2(homedir2(), ".boat-openchamber", "agents.json");
-var stringList = (value) => Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : [];
-var parseModels = (value) => {
-  if (!Array.isArray(value))
-    return [];
-  return value.filter(isRecord).flatMap((model) => {
-    const id = readString(model.id);
-    if (!id)
-      return [];
-    const reasoning = isRecord(model.reasoningEffort) ? model.reasoningEffort : null;
-    const supported = stringList(reasoning?.supported);
-    return [{
-      id,
-      label: readString(model.label) ?? id,
-      credentialIds: stringList(model.credentialIds),
-      reasoning: supported.length > 0 ? { supported, default: readString(reasoning?.default) } : null,
-      fast: model.fastMode === true
-    }];
-  });
-};
-var parseAgentCatalog = (raw) => {
-  if (!isRecord(raw))
-    return [];
-  const agents = [];
-  for (const [harness, entry] of Object.entries(raw)) {
-    if (!isRecord(entry))
-      continue;
-    const cli = isRecord(entry.cli) ? entry.cli : null;
-    const provider = readString(cli?.name) ?? harness;
-    agents.push({
-      harness,
-      provider,
-      label: readString(cli?.description) ?? provider,
-      aliases: stringList(cli?.aliases),
-      order: readNumber(cli?.order) ?? 100,
-      models: parseModels(entry.models)
-    });
-  }
-  return agents.sort((left, right) => left.order - right.order || left.label.localeCompare(right.label));
-};
-var fallbackAgents = () => [
-  { harness: "codex", provider: "codex", label: "OpenAI Codex / ChatGPT", aliases: ["codex"], order: 1, models: [] },
-  { harness: "claude-code", provider: "claude", label: "Claude Code", aliases: ["claude", "claude-code"], order: 2, models: [] },
-  { harness: "pi", provider: "pi", label: "pi", aliases: ["pi"], order: 3, models: [] },
-  { harness: "opencode", provider: "opencode", label: "OpenCode", aliases: ["opencode"], order: 4, models: [] },
-  { harness: "prime-agent", provider: "prime", label: "Prime Agent", aliases: ["prime", "prime-agent"], order: 5, models: [] },
-  { harness: "kimi", provider: "kimi", label: "Kimi Code", aliases: ["kimi", "kimi-code"], order: 6, models: [] },
-  { harness: "mistral", provider: "mistral", label: "Mistral Vibe", aliases: ["mistral"], order: 7, models: [] }
-];
-var providerForHarness = (agents, harness) => {
-  if (!harness)
-    return null;
-  const key = harness.trim().toLowerCase();
-  if (!key)
-    return null;
-  const match = agents.find((agent) => [agent.harness, agent.provider, ...agent.aliases].some((name) => name.toLowerCase() === key));
-  return match?.provider ?? null;
-};
-var agentOptions = (agents, connected) => agents.map((agent) => {
-  const models = agent.models.map((model) => ({
-    id: model.id,
-    label: model.label,
-    available: connected === null || model.credentialIds.length === 0 || model.credentialIds.some((credential) => connected.has(credential)),
-    reasoning: model.reasoning,
-    fast: model.fast
-  }));
-  return {
-    provider: agent.provider,
-    label: agent.label,
-    order: agent.order,
-    available: models.length === 0 ? true : models.some((model) => model.available),
-    models
-  };
-});
-var parseStored = (raw) => {
-  if (!isRecord(raw) || !Array.isArray(raw.agents))
-    return null;
-  const agents = raw.agents.filter(isRecord).flatMap((entry) => {
-    const harness = readString(entry.harness);
-    const provider = readString(entry.provider);
-    if (!harness || !provider)
-      return [];
-    const models = Array.isArray(entry.models) ? entry.models.filter(isRecord).flatMap((model) => {
-      const id = readString(model.id);
-      if (!id)
-        return [];
-      const reasoning = isRecord(model.reasoning) ? model.reasoning : null;
-      const supported = stringList(reasoning?.supported);
-      return [{
-        id,
-        label: readString(model.label) ?? id,
-        credentialIds: stringList(model.credentialIds),
-        reasoning: supported.length > 0 ? { supported, default: readString(reasoning?.default) } : null,
-        fast: model.fast === true
-      }];
-    }) : [];
-    return [{
-      harness,
-      provider,
-      label: readString(entry.label) ?? provider,
-      aliases: stringList(entry.aliases),
-      order: readNumber(entry.order) ?? 100,
-      models
-    }];
-  });
-  return agents.length > 0 ? agents : null;
-};
-var readStored = (file) => {
-  try {
-    return parseStored(JSON.parse(readFileSync(file, "utf8")));
-  } catch {
-    return null;
-  }
-};
-var writeStored = (file, catalog) => {
-  try {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, JSON.stringify(catalog));
-  } catch {}
-};
-var createAgentCatalog = (options = {}) => {
-  const url = options.url ?? CATALOG_URL;
-  const file = options.file ?? DEFAULT_FILE;
-  const ttlMs = options.ttlMs ?? CATALOG_TTL_MS;
-  const clock = options.now ?? Date.now;
-  const fetchImpl = options.fetchImpl ?? fetch;
-  let current = null;
-  let loading = null;
-  let retryAt = 0;
-  const load = async () => {
-    const fetchedAt = clock();
-    try {
-      const response = await fetchImpl(url, { signal: AbortSignal.timeout(8000) });
-      if (!response.ok)
-        throw new Error(`The catalogue answered HTTP ${response.status}.`);
-      const agents = parseAgentCatalog(await response.json());
-      if (agents.length === 0)
-        throw new Error("The catalogue was empty.");
-      current = { fetchedAt, agents };
-      writeStored(file, current);
-      return current;
-    } catch {
-      if (!current) {
-        current = { fetchedAt: 0, agents: readStored(file) ?? fallbackAgents() };
-      }
-      retryAt = clock() + RETRY_MS;
-      return current;
-    }
-  };
-  return {
-    get: async () => {
-      if (current && clock() - current.fetchedAt < ttlMs)
-        return current;
-      if (current && clock() < retryAt)
-        return current;
-      if (loading)
-        return loading;
-      loading = load().finally(() => {
-        loading = null;
-      });
-      return loading;
-    }
-  };
-};
-
-// service/data/connected-credentials.ts
-var createConnectedCredentials = (options) => {
-  let names = null;
-  let loadedAt = 0;
-  let loading = null;
-  const load = async () => {
-    try {
-      const data = await runBoat("ai", ["profiles"], { timeoutMs: 15000 });
-      const profiles = isRecord(data) && Array.isArray(data.profiles) ? data.profiles.filter(isRecord) : [];
-      const chosen = profiles.find((profile) => profile.isDefault === true) ?? profiles[0] ?? null;
-      names = chosen && Array.isArray(chosen.connected) ? chosen.connected.filter((entry) => typeof entry === "string") : [];
-    } catch {
-      names = null;
-    }
-    loadedAt = Date.now();
-    return names;
-  };
-  return {
-    get: async () => {
-      if (loadedAt > 0 && Date.now() - loadedAt < options.ttlMs)
-        return names;
-      if (loading)
-        return loading;
-      loading = load().finally(() => {
-        loading = null;
-      });
-      return loading;
-    }
-  };
-};
-
 // service/data/environment-list.ts
 var createEnvironmentList = (options) => {
   let entries = [];
@@ -674,64 +471,6 @@ var createEnvironmentList = (options) => {
         loading = null;
       });
       return loading;
-    }
-  };
-};
-
-// service/domain/conversations.ts
-var parseConversationRows = (rows) => rows.flatMap((row) => {
-  const line = readBoatLine(row);
-  if (!line)
-    return [];
-  const value = line.value;
-  const id = readString(value.id) ?? readString(value.conversationId);
-  if (!id)
-    return [];
-  return [{
-    id,
-    createdAt: readString(value.createdAt),
-    lastPromptAt: readString(value.lastPromptAt),
-    prompts: readNumber(value.prompts) ?? 0,
-    running: value.running === true,
-    lastHarness: readString(value.lastHarness) ?? readString(value.harness),
-    lastModel: readString(value.lastModel) ?? readString(value.model),
-    lastPromptPreview: readString(value.lastPromptPreview) ?? readString(value.lastPrompt),
-    current: value.current === true
-  }];
-});
-var conversationRows = (data) => {
-  if (Array.isArray(data))
-    return data;
-  if (isRecord(data)) {
-    return Array.isArray(data.conversations) ? data.conversations : [data];
-  }
-  return [];
-};
-var listConversations = async (sandboxId) => {
-  const data = await runBoat("conversations", [sandboxId], { timeoutMs: 15000 });
-  return parseConversationRows(conversationRows(data));
-};
-
-// service/data/conversation-list.ts
-var createConversationList = (options) => {
-  const entries = new Map;
-  return {
-    get: async (sandboxId, readOptions = {}) => {
-      const cached = entries.get(sandboxId);
-      if (!readOptions.force && cached && Date.now() - cached.at < options.ttlMs)
-        return cached.conversations;
-      const conversations = await listConversations(sandboxId);
-      entries.set(sandboxId, { at: Date.now(), conversations });
-      return conversations;
-    },
-    peek: (sandboxId) => entries.get(sandboxId)?.conversations ?? null,
-    forget: (sandboxId) => {
-      entries.delete(sandboxId);
-    },
-    sweep: (valid) => {
-      for (const id of [...entries.keys()])
-        if (!valid.has(id))
-          entries.delete(id);
     }
   };
 };
@@ -947,15 +686,15 @@ var createPlanNote = (options) => {
 };
 
 // service/data/project-registry.ts
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { dirname as dirname2, isAbsolute, join as join3 } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname, isAbsolute, join as join2 } from "node:path";
 var MAX_PROJECTS = 24;
-var DEFAULT_FILE2 = join3(homedir3(), ".boat-openchamber", "projects.json");
+var DEFAULT_FILE = join2(homedir2(), ".boat-openchamber", "projects.json");
 var usable = (directory) => typeof directory === "string" && isAbsolute(directory) && !directory.includes("\x00") && directory.length <= 1024;
 var read = (file) => {
   try {
-    const parsed = JSON.parse(readFileSync2(file, "utf8"));
+    const parsed = JSON.parse(readFileSync(file, "utf8"));
     if (!isRecord(parsed) || !Array.isArray(parsed.directories))
       return [];
     return parsed.directories.filter(usable).slice(0, MAX_PROJECTS);
@@ -964,12 +703,12 @@ var read = (file) => {
   }
 };
 var createProjectRegistry = (options = {}) => {
-  const file = options.file ?? DEFAULT_FILE2;
+  const file = options.file ?? DEFAULT_FILE;
   const directories = new Set(read(file));
   const save = () => {
     try {
-      mkdirSync2(dirname2(file), { recursive: true });
-      writeFileSync2(file, JSON.stringify({ directories: [...directories] }, null, 2));
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify({ directories: [...directories] }, null, 2));
     } catch {}
   };
   return {
@@ -997,40 +736,6 @@ var createProjectRegistry = (options = {}) => {
         directories.add(directory);
       save();
       return true;
-    }
-  };
-};
-
-// service/data/running-agents.ts
-var createRunningAgents = (options) => {
-  const running = new Set;
-  const checkedAt = new Map;
-  return {
-    check: (sandboxId) => {
-      const now = Date.now();
-      if (now - (checkedAt.get(sandboxId) ?? 0) < options.ttlMs)
-        return;
-      checkedAt.set(sandboxId, now);
-      options.conversations.get(sandboxId, { force: true }).then((conversations) => {
-        if (conversations.some((conversation) => conversation.running))
-          running.add(sandboxId);
-        else
-          running.delete(sandboxId);
-      }, () => {});
-    },
-    has: (sandboxId) => running.has(sandboxId),
-    all: () => running,
-    forget: (sandboxId) => {
-      running.delete(sandboxId);
-      checkedAt.delete(sandboxId);
-    },
-    sweep: (valid) => {
-      for (const id of [...running])
-        if (!valid.has(id))
-          running.delete(id);
-      for (const id of [...checkedAt.keys()])
-        if (!valid.has(id))
-          checkedAt.delete(id);
     }
   };
 };
@@ -1150,328 +855,10 @@ var listEnvironments = async () => {
   return summaries;
 };
 
-// service/followers.ts
-import readline2 from "node:readline";
-
-// service/domain/events.ts
-var TEXT_MAX = 20000;
-var TOOL_DETAIL_MAX = 300;
-var TOOLS_MAX = 40;
-var readTimestamp = (value) => {
-  if (typeof value === "number" && Number.isFinite(value))
-    return value;
-  if (typeof value === "string") {
-    const numeric = Number(value);
-    if (Number.isFinite(numeric))
-      return numeric;
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed))
-      return parsed;
-  }
-  return 0;
-};
-var toolDetail = (input) => {
-  if (input === undefined || input === null)
-    return "";
-  if (isRecord(input)) {
-    const command = readString(input.command) ?? readString(input.cmd);
-    if (command)
-      return clip(command, TOOL_DETAIL_MAX);
-    const path = readString(input.path) ?? readString(input.file_path) ?? readString(input.filePath);
-    if (path)
-      return clip(path, TOOL_DETAIL_MAX);
-  }
-  try {
-    return clip(JSON.stringify(input), TOOL_DETAIL_MAX);
-  } catch {
-    return "";
-  }
-};
-var readTools = (value) => {
-  if (!Array.isArray(value))
-    return [];
-  return value.slice(0, TOOLS_MAX).flatMap((entry) => {
-    if (!isRecord(entry))
-      return [];
-    const use = isRecord(entry.use) ? entry.use : null;
-    const result = isRecord(entry.result) ? entry.result : null;
-    return [{
-      name: readString(use?.name) ?? readString(use?.type) ?? "tool",
-      detail: toolDetail(use?.input),
-      isError: result?.is_error === true
-    }];
-  });
-};
-var normalizeEvent = (raw, fallbackConversation = null) => {
-  const line = readBoatLine(raw);
-  if (!line)
-    return null;
-  const value = line.value;
-  const id = readString(value.id) ?? readString(value.eventId);
-  if (!id)
-    return null;
-  const type = readString(value.type) ?? readString(value.event) ?? "event";
-  const data = isRecord(value.data) ? value.data : {};
-  const base = {
-    id,
-    type,
-    at: readTimestamp(value.timestamp) || Date.now(),
-    text: "",
-    streaming: false,
-    model: null,
-    status: null,
-    tools: [],
-    error: null,
-    conversationId: readString(value.conversationId) ?? readString(data.conversationId) ?? fallbackConversation
-  };
-  if (type === "prompt") {
-    const status = readString(data.status);
-    const failed = status === "failed" || status === "error";
-    return {
-      ...base,
-      role: "user",
-      text: clip(readString(data.prompt) ?? readString(data.message) ?? "", TEXT_MAX),
-      status,
-      error: failed ? readString(data.error) ?? readString(data.message) ?? "The turn failed." : null
-    };
-  }
-  if (type === "response") {
-    return {
-      ...base,
-      role: "assistant",
-      text: clip(readString(data.content) ?? "", TEXT_MAX),
-      streaming: data.is_streaming === true || line.final === false,
-      model: readString(data.model),
-      tools: readTools(data.tools),
-      error: readString(data.error)
-    };
-  }
-  if (type === "steer") {
-    return {
-      ...base,
-      role: "user",
-      text: clip(readString(data.message) ?? readString(data.prompt) ?? readString(data.content) ?? "", TEXT_MAX),
-      status: readString(data.mode) ?? "steer"
-    };
-  }
-  if (type === "error" || type === "sandbox.error") {
-    const message = readString(data.message) ?? readString(data.error) ?? readString(value.error) ?? "The agent failed.";
-    return { ...base, role: "system", text: clip(message, TEXT_MAX), error: message };
-  }
-  const text = readString(data.content) ?? readString(data.message) ?? "";
-  return {
-    ...base,
-    role: text ? "assistant" : "system",
-    text: clip(text, TEXT_MAX),
-    error: readString(data.error)
-  };
-};
-var mergeEventRows = (rows, conversationId) => {
-  const byId = new Map;
-  for (const row of rows) {
-    const event = normalizeEvent(row, conversationId);
-    if (event)
-      byId.set(event.id, event);
-  }
-  return [...byId.values()];
-};
-var eventRows = (data) => {
-  if (Array.isArray(data))
-    return data;
-  if (isRecord(data)) {
-    return Array.isArray(data.events) ? data.events : [data];
-  }
-  return [];
-};
-var listEvents = async (sandboxId, conversationId, options = {}) => {
-  const data = await runBoat("events", [sandboxId, "--convo", conversationId], {
-    timeoutMs: options.timeoutMs ?? 30000
-  });
-  return mergeEventRows(eventRows(data), conversationId);
-};
-var eventSize = (event) => 200 + event.text.length + event.tools.reduce((total, tool) => total + tool.name.length + tool.detail.length + 32, 0);
-
-// service/followers.ts
-var MAX_BATCH_EVENTS = 40;
-var MAX_BATCH_CHARS = 36000;
-var keyOf = (sandboxId, conversationId) => `${sandboxId}:${conversationId}`;
-var createFollowers = (options) => {
-  const followers = new Map;
-  let sweeper = null;
-  const send = (topic, data) => {
-    try {
-      Promise.resolve(options.sink(topic, data)).catch(() => {});
-    } catch {}
-  };
-  const flush = (follower) => {
-    if (follower.flushTimer) {
-      clearTimeout(follower.flushTimer);
-      follower.flushTimer = null;
-    }
-    if (follower.buffer.length === 0)
-      return;
-    const batch = [];
-    let chars = 0;
-    while (follower.buffer.length > 0 && batch.length < MAX_BATCH_EVENTS) {
-      const next = follower.buffer[0];
-      if (!next)
-        break;
-      const size = eventSize(next);
-      if (batch.length > 0 && chars + size > MAX_BATCH_CHARS)
-        break;
-      follower.buffer.shift();
-      batch.push(next);
-      chars += size;
-    }
-    if (batch.length > 0) {
-      send("boat:events", {
-        sandbox: follower.sandboxId,
-        conversation: follower.conversationId,
-        events: batch
-      });
-    }
-    if (follower.buffer.length > 0 && !follower.stopped) {
-      follower.flushTimer = setTimeout(() => flush(follower), options.flushMs);
-    }
-  };
-  const queue = (follower, event) => {
-    follower.buffer.push(event);
-    if (follower.buffer.length >= MAX_BATCH_EVENTS) {
-      flush(follower);
-      return;
-    }
-    if (!follower.flushTimer)
-      follower.flushTimer = setTimeout(() => flush(follower), options.flushMs);
-  };
-  const dispose = (follower) => {
-    follower.stopped = true;
-    if (follower.flushTimer) {
-      clearTimeout(follower.flushTimer);
-      follower.flushTimer = null;
-    }
-    followers.delete(follower.key);
-    const child = follower.child;
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGTERM");
-      setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null)
-          child.kill("SIGKILL");
-      }, 2000).unref();
-    }
-  };
-  const ensureSweeper = () => {
-    if (sweeper)
-      return;
-    sweeper = setInterval(() => {
-      const now = Date.now();
-      for (const follower of [...followers.values()]) {
-        if (now - follower.lastPing > options.ttlMs)
-          dispose(follower);
-      }
-      if (followers.size === 0 && sweeper) {
-        clearInterval(sweeper);
-        sweeper = null;
-      }
-    }, options.sweepMs);
-    sweeper.unref();
-  };
-  return {
-    watch: (sandboxId, conversationId) => {
-      const key = keyOf(sandboxId, conversationId);
-      const existing = followers.get(key);
-      if (existing) {
-        existing.lastPing = Date.now();
-        return;
-      }
-      const child = spawnBoat("events", [sandboxId, "--convo", conversationId, "--follow"]);
-      const stdout = child.stdout;
-      if (!stdout) {
-        child.kill("SIGTERM");
-        throw new BoatError("command-failed", "boat events did not open its output.");
-      }
-      const follower = {
-        key,
-        sandboxId,
-        conversationId,
-        child,
-        lastPing: Date.now(),
-        buffer: [],
-        flushTimer: null,
-        stderr: "",
-        stopped: false
-      };
-      followers.set(key, follower);
-      ensureSweeper();
-      const lines = readline2.createInterface({ input: stdout });
-      lines.on("line", (line) => {
-        const event = normalizeEvent(parseBoatJson(line), conversationId);
-        if (event)
-          queue(follower, event);
-      });
-      child.stderr?.on("data", (chunk) => {
-        follower.stderr = `${follower.stderr}${String(chunk)}`.slice(-1000);
-      });
-      child.on("spawn", () => {
-        send("boat:stream", { sandbox: sandboxId, conversation: conversationId, state: "live" });
-      });
-      child.on("error", (error) => {
-        send("boat:stream", {
-          sandbox: sandboxId,
-          conversation: conversationId,
-          state: "error",
-          message: error.message
-        });
-        dispose(follower);
-      });
-      child.on("close", (code) => {
-        if (follower.stopped) {
-          followers.delete(key);
-          return;
-        }
-        flush(follower);
-        const detail = follower.stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-1)[0] ?? null;
-        send("boat:stream", {
-          sandbox: sandboxId,
-          conversation: conversationId,
-          state: "ended",
-          message: detail ?? (code === 0 ? null : `boat events exited with code ${code ?? "unknown"}.`)
-        });
-        follower.stopped = true;
-        if (follower.flushTimer)
-          clearTimeout(follower.flushTimer);
-        followers.delete(key);
-      });
-    },
-    unwatch: (sandboxId, conversationId) => {
-      const follower = followers.get(keyOf(sandboxId, conversationId));
-      if (follower)
-        dispose(follower);
-    },
-    stopAll: () => {
-      for (const follower of [...followers.values()])
-        dispose(follower);
-    }
-  };
-};
-var installFollowerCleanup = (followers, others = []) => {
-  const stopAll = () => {
-    followers.stopAll();
-    for (const other of others)
-      other.stopAll();
-  };
-  for (const signal of ["SIGTERM", "SIGINT"]) {
-    process.on(signal, () => {
-      stopAll();
-      process.exit(0);
-    });
-  }
-  process.on("exit", stopAll);
-};
-
 // service/status/text.ts
-var TEXT_MAX2 = 4000;
+var TEXT_MAX = 4000;
 var SANDBOXES_SHOWN = 12;
-var COMMANDS_LINE = 'Run commands with `boat exec <id> -- <command>`. Ask a sandbox agent with `boat prompt <id> --provider <claude|codex|opencode|pi|kimi|mistral|prime> --model <model> [--new | --resume <conversation>] "<text>"`; add to a running turn with `boat steer <id> --convo <conversation> "<text>"`, stop it with `boat interrupt <id>`. Pass `--json --no-update` to every command.';
+var COMMANDS_LINE = "Run commands inside a sandbox with `boat exec <id> -- <command>`. Sandbox agents run in each sandbox's OpenCode server; drive them from the Boat panel — the Sessions tab, or the row menu's OpenCode item.";
 var sizeOf = (sandbox) => {
   const parts = [sandbox.type, sandbox.memoryGB === null ? null : `${sandbox.memoryGB} GB`].filter(Boolean);
   return parts.join(" ");
@@ -1510,7 +897,7 @@ var buildInstructions = (sandboxes, now, failure = null) => {
   }
   lines.push(COMMANDS_LINE);
   return clip(lines.join(`
-`), TEXT_MAX2);
+`), TEXT_MAX);
 };
 var buildProjectInstructions = (projectName, sandboxes, now) => {
   const lines = [`Boat sandboxes for the "${projectName}" project (boat.dev):`];
@@ -1526,7 +913,7 @@ var buildProjectInstructions = (projectName, sandboxes, now) => {
   }
   lines.push(COMMANDS_LINE);
   return clip(lines.join(`
-`), TEXT_MAX2);
+`), TEXT_MAX);
 };
 
 // service/instructions.ts
@@ -1574,10 +961,10 @@ var createInstructionsWriter = (options) => {
 };
 
 // service/marks/mark.ts
-var buildProjectMark = (sandboxes, agents) => {
+var buildProjectMark = (sandboxes, busy) => {
   if (sandboxes.length === 0)
     return null;
-  const running = sandboxes.filter((sandbox) => agents.has(sandbox.id)).length;
+  const running = sandboxes.filter((sandbox) => busy.has(sandbox.id)).length;
   const up = sandboxes.some((sandbox) => isUpState(sandbox.state));
   const text = [
     `${sandboxes.length} sandbox${sandboxes.length === 1 ? "" : "es"}`,
@@ -1634,7 +1021,7 @@ var createMarker = (deps) => {
       try {
         const scope = await deps.scoper.apply(snapshot.sandboxes, directory);
         const sandboxes = scope.entries.filter((entry) => entry.inProject).map((entry) => entry.sandbox);
-        next.set(directory, buildProjectMark(sandboxes, deps.agents.all()));
+        next.set(directory, buildProjectMark(sandboxes, deps.sessions.busyAll()));
       } catch {
         const current = previous.get(directory);
         if (current !== undefined)
@@ -3978,6 +3365,10 @@ var createOpencodeConnections = (options = {}) => {
   };
   return {
     get,
+    peek: (sandboxId) => {
+      const cached = entries.get(sandboxId);
+      return cached && Date.now() - cached.at < ttlMs ? cached.connection : null;
+    },
     invalidate,
     forget: invalidate,
     run: async (sandboxId, operation) => {
@@ -4005,7 +3396,7 @@ var OPENCODE_STREAM_TOPIC = "boat:opencode-stream";
 
 // service/opencode/normalize.ts
 var TOOL_OUTPUT_MAX = 20000;
-var readTimestamp2 = (value) => {
+var readTimestamp = (value) => {
   if (typeof value === "number" && Number.isFinite(value))
     return value;
   if (typeof value === "string") {
@@ -4142,8 +3533,8 @@ var normalizeTool = (raw) => {
     files: content.files,
     metadata: recordOf(state.metadata),
     executed: typeof raw.executed === "boolean" ? raw.executed : null,
-    startedAt: readTimestamp2(time.created) || null,
-    completedAt: readTimestamp2(time.completed) || null,
+    startedAt: readTimestamp(time.created) || null,
+    completedAt: readTimestamp(time.completed) || null,
     truncated: content.text !== null && content.text.length > TOOL_OUTPUT_MAX
   };
 };
@@ -4170,8 +3561,8 @@ var normalizeAssistantContent = (value) => {
         kind: "reasoning",
         ordinal,
         text,
-        startedAt: readTimestamp2(time.created) || null,
-        completedAt: readTimestamp2(time.completed) || null
+        startedAt: readTimestamp(time.created) || null,
+        completedAt: readTimestamp(time.completed) || null
       });
       return;
     }
@@ -4204,8 +3595,8 @@ var normalizeMessage = (raw, sessionID) => {
     return null;
   const type = readString(raw.type) ?? "unknown";
   const time = isRecord(raw.time) ? raw.time : {};
-  const createdAt = readTimestamp2(time.created);
-  const completedAt = readTimestamp2(time.completed) || null;
+  const createdAt = readTimestamp(time.created);
+  const completedAt = readTimestamp(time.completed) || null;
   const role = roleOf(type);
   const model = role === "assistant" ? readModelRef(raw.model) : null;
   const agent = readString(raw.agent);
@@ -4327,8 +3718,8 @@ var normalizeSession = (raw) => {
   const time = isRecord(raw.time) ? raw.time : {};
   const location = isRecord(raw.location) ? raw.location : null;
   const outcome = readOutcome(raw.outcome);
-  const busyAt = readTimestamp2(time.busy) || null;
-  const idleAt = readTimestamp2(time.idle) || null;
+  const busyAt = readTimestamp(time.busy) || null;
+  const idleAt = readTimestamp(time.idle) || null;
   const busy = busyAt !== null && busyAt > (idleAt ?? 0);
   return {
     id,
@@ -4337,11 +3728,11 @@ var normalizeSession = (raw) => {
     projectID: readString(raw.projectID),
     agent: readString(raw.agent),
     model: readModelRef(raw.model),
-    createdAt: readTimestamp2(time.created),
-    updatedAt: readTimestamp2(time.updated) || readTimestamp2(time.created),
+    createdAt: readTimestamp(time.created),
+    updatedAt: readTimestamp(time.updated) || readTimestamp(time.created),
     busyAt,
     idleAt,
-    archived: readTimestamp2(time.archived) > 0,
+    archived: readTimestamp(time.archived) > 0,
     outcome,
     status: busy ? "busy" : outcome === "failed" ? "error" : "idle",
     cost: readNumber(raw.cost) ?? 0
@@ -4533,7 +3924,7 @@ var normalizeStreamEvent = (raw) => {
       const session = normalizeSession({
         ...data,
         id: data.sessionID,
-        time: { created: readTimestamp2(raw.created), updated: readTimestamp2(raw.created) }
+        time: { created: readTimestamp(raw.created), updated: readTimestamp(raw.created) }
       });
       return session ? { type: "session-created", session } : null;
     }
@@ -4777,9 +4168,9 @@ var normalizeStreamEvent = (raw) => {
 };
 
 // service/opencode/followers.ts
-var MAX_BATCH_EVENTS2 = 40;
-var MAX_BATCH_CHARS2 = 36000;
-var eventSize2 = (event) => {
+var MAX_BATCH_EVENTS = 40;
+var MAX_BATCH_CHARS = 36000;
+var eventSize = (event) => {
   try {
     return JSON.stringify(event).length;
   } catch {
@@ -4807,12 +4198,12 @@ var createOpencodeFollowers = (options) => {
       return;
     const batch = [];
     let chars = 0;
-    while (follower.buffer.length > 0 && batch.length < MAX_BATCH_EVENTS2) {
+    while (follower.buffer.length > 0 && batch.length < MAX_BATCH_EVENTS) {
       const next = follower.buffer[0];
       if (!next)
         break;
-      const size = eventSize2(next);
-      if (batch.length > 0 && chars + size > MAX_BATCH_CHARS2)
+      const size = eventSize(next);
+      if (batch.length > 0 && chars + size > MAX_BATCH_CHARS)
         break;
       follower.buffer.shift();
       batch.push(next);
@@ -4828,7 +4219,7 @@ var createOpencodeFollowers = (options) => {
   };
   const queue = (follower, event) => {
     follower.buffer.push(event);
-    if (follower.buffer.length >= MAX_BATCH_EVENTS2) {
+    if (follower.buffer.length >= MAX_BATCH_EVENTS) {
       flush(follower);
       return;
     }
@@ -4940,6 +4331,204 @@ var createOpencodeFollowers = (options) => {
     stopAll: () => {
       for (const follower of [...followers.values()])
         dispose(follower);
+    }
+  };
+};
+var installFollowerCleanup = (followers, others = []) => {
+  const stopAll = () => {
+    followers.stopAll();
+    for (const other of others)
+      other.stopAll();
+  };
+  for (const signal of ["SIGTERM", "SIGINT"]) {
+    process.on(signal, () => {
+      stopAll();
+      process.exit(0);
+    });
+  }
+  process.on("exit", stopAll);
+};
+
+// service/opencode/reads.ts
+var SESSION_PAGE = 100;
+var SESSION_PAGES_MAX = 4;
+var MESSAGE_PAGE = 200;
+var MAX_MESSAGE_PAGES = 10;
+var rowsOf = (value) => {
+  if (Array.isArray(value))
+    return value;
+  return isRecord(value) && Array.isArray(value.data) ? value.data : [];
+};
+var sessionsOf = (rows) => rows.flatMap((entry) => {
+  const session = normalizeSession(entry);
+  return session ? [session] : [];
+});
+var cursorOf = (raw) => readString(isRecord(raw) && isRecord(raw.cursor) ? raw.cursor.next : null);
+var readSessions = async (connection, directory = null) => {
+  const rows = [];
+  let cursor = null;
+  for (let page = 0;page < (directory ? SESSION_PAGES_MAX : 1); page += 1) {
+    const raw = await connection.client.session.list({
+      limit: SESSION_PAGE,
+      ...cursor ? { cursor } : { order: "desc" }
+    });
+    const batch = rowsOf(raw);
+    rows.push(...batch);
+    if (!directory)
+      break;
+    if (sessionsOf(rows).filter((session) => session.directory === directory).length >= SESSION_PAGE)
+      break;
+    cursor = cursorOf(raw);
+    if (!cursor || batch.length === 0)
+      break;
+  }
+  const sessions = sessionsOf(rows);
+  if (!directory)
+    return sessions;
+  return sessions.filter((session) => session.directory === directory).slice(0, SESSION_PAGE);
+};
+var readSession = async (connection, sessionID) => {
+  const raw = await connection.client.session.get({ sessionID });
+  return normalizeSession(raw);
+};
+var readSessionMessages = async (connection, sessionID) => {
+  const rows = [];
+  const seen = new Set;
+  let cursor = null;
+  for (let page = 0;page < MAX_MESSAGE_PAGES; page += 1) {
+    const raw = await connection.client.message.list({
+      sessionID,
+      limit: MESSAGE_PAGE,
+      ...cursor ? { cursor } : { order: "asc" }
+    });
+    for (const row of rowsOf(raw)) {
+      const id = isRecord(row) ? readString(row.id) : null;
+      if (id && seen.has(id))
+        continue;
+      if (id)
+        seen.add(id);
+      rows.push(row);
+    }
+    const cursors = isRecord(raw) && isRecord(raw.cursor) ? raw.cursor : null;
+    cursor = readString(cursors?.next);
+    if (!cursor) {
+      return {
+        messages: rows.flatMap((row) => {
+          const message = normalizeMessage(row, sessionID);
+          return message ? [message] : [];
+        }),
+        truncated: false
+      };
+    }
+  }
+  return {
+    messages: rows.flatMap((row) => {
+      const message = normalizeMessage(row, sessionID);
+      return message ? [message] : [];
+    }),
+    truncated: true
+  };
+};
+var readPermissions = async (connection, sessionID) => {
+  const raw = await connection.client.permission.list({ sessionID });
+  return rowsOf(raw).flatMap((entry) => {
+    const request = normalizePermissionRequest(entry);
+    return request ? [request] : [];
+  });
+};
+var readQuestions = async (connection, sessionID) => {
+  const raw = await connection.client.session.form.list({ sessionID });
+  return rowsOf(raw).flatMap((entry) => {
+    const request = normalizeQuestionRequest(entry);
+    return request ? [request] : [];
+  });
+};
+var readCatalog = async (connection) => {
+  const [agentsRaw, providersRaw, modelsRaw, defaultRaw] = await Promise.all([
+    connection.client.agent.list(),
+    connection.client.provider.list(),
+    connection.client.model.list(),
+    connection.client.model.default()
+  ]);
+  const agents = rowsOf(agentsRaw).flatMap((entry) => {
+    const agent = normalizeAgent(entry);
+    return agent ? [agent] : [];
+  });
+  const providers = rowsOf(providersRaw).flatMap((entry) => {
+    const provider = normalizeProvider(entry);
+    return provider ? [provider] : [];
+  });
+  const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]));
+  const models = normalizeModels(rowsOf(modelsRaw), providerNames);
+  const defaultData = isRecord(defaultRaw) && isRecord(defaultRaw.data) ? defaultRaw.data : defaultRaw;
+  return {
+    agents,
+    providers,
+    models,
+    defaultAgent: agents.find((agent) => agent.mode === "primary" && !agent.hidden)?.id ?? null,
+    defaultModel: readModelRef(defaultData)
+  };
+};
+
+// service/opencode/sessions.ts
+var createOpencodeSessions = (options) => {
+  const entries = new Map;
+  const busy = new Set;
+  const checkedAt = new Map;
+  const pending = new Map;
+  const remember = (sandboxId, sessions) => {
+    entries.set(sandboxId, { at: Date.now(), sessions });
+    if (sessions.some((session) => session.status === "busy"))
+      busy.add(sandboxId);
+    else
+      busy.delete(sandboxId);
+    return sessions;
+  };
+  const load = (sandboxId) => {
+    const running = pending.get(sandboxId);
+    if (running)
+      return running;
+    const promise = options.connections.run(sandboxId, (connection) => readSessions(connection)).then((sessions) => remember(sandboxId, sessions)).finally(() => {
+      if (pending.get(sandboxId) === promise)
+        pending.delete(sandboxId);
+    });
+    pending.set(sandboxId, promise);
+    return promise;
+  };
+  return {
+    get: async (sandboxId, readOptions = {}) => {
+      const cached = entries.get(sandboxId);
+      if (!readOptions.force && cached && Date.now() - cached.at < options.ttlMs)
+        return cached.sessions;
+      return load(sandboxId);
+    },
+    peek: (sandboxId) => entries.get(sandboxId)?.sessions ?? null,
+    busy: (sandboxId) => busy.has(sandboxId),
+    busyAll: () => busy,
+    check: (sandboxId) => {
+      const now = Date.now();
+      if (now - (checkedAt.get(sandboxId) ?? 0) < options.checkMs)
+        return;
+      if (!options.connections.peek(sandboxId))
+        return;
+      checkedAt.set(sandboxId, now);
+      load(sandboxId).catch(() => {});
+    },
+    forget: (sandboxId) => {
+      entries.delete(sandboxId);
+      busy.delete(sandboxId);
+      checkedAt.delete(sandboxId);
+    },
+    sweep: (valid) => {
+      for (const id of [...entries.keys()])
+        if (!valid.has(id))
+          entries.delete(id);
+      for (const id of [...busy])
+        if (!valid.has(id))
+          busy.delete(id);
+      for (const id of [...checkedAt.keys()])
+        if (!valid.has(id))
+          checkedAt.delete(id);
     }
   };
 };
@@ -5273,7 +4862,7 @@ var buildStatusView = (input) => {
     notes.push({ kind: "note", id: "note-plan", text: clip2(input.planNote, NOTE_MAX), tone: "warning" });
   }
   const lines = input.sandboxes.slice().sort((left, right) => {
-    const byAgent = Number(input.agents.has(right.id)) - Number(input.agents.has(left.id));
+    const byAgent = Number(input.busy.has(right.id)) - Number(input.busy.has(left.id));
     if (byAgent !== 0)
       return byAgent;
     const byState = orderOf(left) - orderOf(right);
@@ -5290,7 +4879,7 @@ var buildStatusView = (input) => {
       tooltip: tooltipOf(sandbox, input.now),
       actions: actionsOf(sandbox)
     };
-    if (input.agents.has(sandbox.id))
+    if (input.busy.has(sandbox.id))
       row.badge = { label: "agent running", tone: "accent" };
     const chip = desktopChip(sandbox, input.desktopUrls);
     if (chip)
@@ -5306,11 +4895,10 @@ var createWarmer = (options) => (snapshot) => {
   const up = snapshot.sandboxes.filter((sandbox) => isUpState(sandbox.state)).map((sandbox) => sandbox.id);
   options.desktop.warm(up);
   for (const id of up)
-    options.agents.check(id);
+    options.sessions.check(id);
   const valid = new Set(snapshot.sandboxes.map((sandbox) => sandbox.id));
   options.desktop.sweep(valid);
-  options.agents.sweep(valid);
-  options.conversations.sweep(valid);
+  options.sessions.sweep(valid);
   options.planNote.refresh();
   options.marker.sync(snapshot);
   options.instructions.sync(snapshot);
@@ -5319,9 +4907,9 @@ var createWarmer = (options) => (snapshot) => {
 // service/context.ts
 var TTL = {
   sandboxes: 4000,
-  conversations: 2000,
+  sessions: 3000,
+  sessionCheck: 20000,
   desktop: 5 * 60000,
-  agents: 20000,
   environments: 60000,
   remotes: 5 * 60000,
   limits: 5 * 60000,
@@ -5329,9 +4917,7 @@ var TTL = {
 };
 var FOLLOWERS = { ttlMs: 120000, sweepMs: 30000, flushMs: 250 };
 var createServiceContext = (host) => {
-  const conversations = createConversationList({ ttlMs: TTL.conversations });
   const desktop = createDesktopLinks({ ttlMs: TTL.desktop });
-  const agents = createRunningAgents({ ttlMs: TTL.agents, conversations });
   const planNote = createPlanNote({ ttlMs: TTL.limits });
   const instructions = createInstructionsWriter({
     setInstructions: host.setInstructions,
@@ -5341,27 +4927,28 @@ var createServiceContext = (host) => {
   const remotes = createRemoteCache({ ttlMs: TTL.remotes });
   const ranking = createProjectRanking();
   const scoper = createScoper({ environments, remotes, ranking });
-  const catalog = createAgentCatalog();
-  const credentials = createConnectedCredentials({ ttlMs: 60000 });
   const projects = createProjectRegistry({
     file: process.env.BOAT_PROJECTS_FILE?.trim() || undefined
   });
-  const marker = createMarker({ projects, scoper, agents, setMark: host.setMark });
+  const opencode = createOpencodeConnections();
+  const sessions = createOpencodeSessions({
+    connections: opencode,
+    ttlMs: TTL.sessions,
+    checkMs: TTL.sessionCheck
+  });
+  const marker = createMarker({ projects, scoper, sessions, setMark: host.setMark });
   const sandboxes = createSandboxList({
     ttlMs: TTL.sandboxes,
     load: listSandboxes,
-    onSnapshot: createWarmer({ conversations, desktop, agents, planNote, instructions, marker })
+    onSnapshot: createWarmer({ sessions, desktop, planNote, instructions, marker })
   });
-  const followers = createFollowers({ sink: host.emit, ...FOLLOWERS });
-  const opencode = createOpencodeConnections();
   const opencodeFollowers = createOpencodeFollowers({
     connections: opencode,
     sink: host.emit,
     ...FOLLOWERS
   });
   const forgetSandbox = (sandboxId) => {
-    conversations.forget(sandboxId);
-    agents.forget(sandboxId);
+    sessions.forget(sandboxId);
     desktop.forget(sandboxId);
     opencode.forget(sandboxId);
     opencodeFollowers.unwatch(sandboxId);
@@ -5383,10 +4970,8 @@ var createServiceContext = (host) => {
   });
   return {
     sandboxes,
-    conversations,
     desktop,
-    agents,
-    followers,
+    sessions,
     opencode,
     opencodeFollowers,
     scoper,
@@ -5394,8 +4979,6 @@ var createServiceContext = (host) => {
     environments,
     remotes,
     projects,
-    catalog,
-    credentials,
     createJobs,
     statusView: async (directory) => {
       const snapshot = await sandboxes.get();
@@ -5407,7 +4990,7 @@ var createServiceContext = (host) => {
       return buildStatusView({
         sandboxes: visible.map((entry) => entry.sandbox),
         desktopUrls: desktop.all(),
-        agents: agents.all(),
+        busy: sessions.busyAll(),
         failure: snapshot.failure,
         planNote: planNote.current(),
         now: Date.now(),
@@ -5464,256 +5047,6 @@ var createRequestContext = (req, res) => {
   };
 };
 
-// shared/agent.ts
-var AGENT_PROVIDERS = ["claude", "codex", "pi", "opencode", "prime", "kimi", "mistral"];
-var isAgentProvider = (value) => AGENT_PROVIDERS.includes(value);
-
-// service/domain/agent.ts
-import readline3 from "node:readline";
-
-// service/domain/prompt-argv.ts
-var promptCommand = (sandboxId, text, options) => {
-  const args = [sandboxId];
-  if (options.newConversation)
-    args.push("--new");
-  if (options.conversation)
-    args.push("--resume", options.conversation);
-  if (options.provider)
-    args.push("--provider", options.provider);
-  if (options.model)
-    args.push("--model", options.model);
-  if (options.reasoning)
-    args.push("--reasoning-effort", options.reasoning);
-  args.push("--", text);
-  return args;
-};
-
-// service/domain/agent.ts
-var MUTATION_TIMEOUT_MS2 = 20000;
-var EARLY_RETURN_MS = 2500;
-var promptSandbox = (sandboxId, text, options) => new Promise((resolve, reject) => {
-  const args = promptCommand(sandboxId, text, options);
-  const child = spawnBoat("prompt", args);
-  const stdout = child.stdout;
-  if (!stdout) {
-    child.kill("SIGTERM");
-    reject(new BoatError("command-failed", "boat prompt did not open its output."));
-    return;
-  }
-  let conversationId = null;
-  let stdoutError = null;
-  let stderr = "";
-  let settled = false;
-  const finish = (value) => {
-    if (settled)
-      return;
-    settled = true;
-    resolve(value);
-  };
-  const fail = (message) => {
-    if (settled)
-      return;
-    settled = true;
-    const notSignedIn = /not signed in|signed out|session expired|boat login/i.test(message);
-    reject(new BoatError(notSignedIn ? "not-signed-in" : "command-failed", message));
-  };
-  const lines = readline3.createInterface({ input: stdout });
-  lines.on("line", (line) => {
-    const raw = parseBoatJson(line);
-    if (!isRecord(raw))
-      return;
-    const nested = isRecord(raw.error) ? raw.error : null;
-    const errorText = readString(nested?.message) ?? readString(raw.error) ?? (raw.event === "error" ? readString(raw.message) : null);
-    if (errorText)
-      stdoutError = errorText;
-    const data = isRecord(raw.data) ? raw.data : null;
-    conversationId = readString(raw.conversationId) ?? readString(data?.conversationId) ?? conversationId;
-    if (conversationId)
-      finish({ conversationId, pending: true });
-  });
-  child.stderr?.on("data", (chunk) => {
-    stderr = `${stderr}${String(chunk)}`.slice(-4000);
-  });
-  child.on("error", (error) => fail(error.message));
-  child.on("close", (code) => {
-    if (code === 0) {
-      finish({ conversationId, pending: false });
-      return;
-    }
-    const detail = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-2).join(" ") || stdoutError || `boat prompt exited with code ${code ?? "unknown"}.`;
-    fail(detail);
-  });
-  setTimeout(() => finish({ conversationId, pending: true }), EARLY_RETURN_MS).unref();
-});
-var steerSandbox = async (sandboxId, conversationId, text) => {
-  await runBoat("steer", [sandboxId, "--convo", conversationId, "--", text], { timeoutMs: MUTATION_TIMEOUT_MS2 });
-};
-var interruptSandbox = async (sandboxId, conversationId) => {
-  await runBoat("interrupt", [sandboxId, "--convo", conversationId], { timeoutMs: MUTATION_TIMEOUT_MS2 });
-};
-
-// service/router.ts
-var route = (method, path, handler) => ({
-  method,
-  path,
-  handler
-});
-var createRouter = (routes) => {
-  const table = new Map;
-  for (const entry of routes) {
-    const key = `${entry.method} ${entry.path}`;
-    if (table.has(key))
-      throw new Error(`Boat service: duplicate route ${key}.`);
-    table.set(key, entry.handler);
-  }
-  return async (context) => table.get(`${context.method} ${context.path}`)?.(context) ?? null;
-};
-
-// service/validation.ts
-var SANDBOX_ID = /^[a-z]{2,8}_[a-z0-9]{4,40}$/;
-var CONVERSATION_ID = /^[A-Za-z0-9_-]{1,64}$/;
-var OPENCODE_SESSION_ID = /^ses_[A-Za-z0-9]{6,64}$/;
-var OPENCODE_NAME = /^[A-Za-z0-9._:-]{1,100}$/;
-var OPENCODE_MODEL_NAME = /^[A-Za-z0-9._:@+[\]()/-]{1,200}$/;
-var OPENCODE_REQUEST_ID = /^[A-Za-z0-9_-]{1,128}$/;
-var MAX_PROMPT_CHARS = 20000;
-var MAX_MODEL_CHARS = 200;
-var MAX_TITLE_CHARS = 200;
-var MAX_DIRECTORY_CHARS = 500;
-var isSandboxId = (value) => typeof value === "string" && SANDBOX_ID.test(value);
-var isConversationId = (value) => typeof value === "string" && CONVERSATION_ID.test(value);
-var isOpencodeSessionId = (value) => typeof value === "string" && OPENCODE_SESSION_ID.test(value);
-var isOpencodeRequestId = (value) => typeof value === "string" && OPENCODE_REQUEST_ID.test(value);
-var isOpencodeName = (value) => typeof value === "string" && OPENCODE_NAME.test(value);
-var isAbsoluteDirectory = (value) => typeof value === "string" && value.startsWith("/") && value.length <= MAX_DIRECTORY_CHARS && !value.includes("\x00") && !value.split("/").includes("..");
-var readOpencodeModelRef = (value) => {
-  if (!isRecord(value))
-    return null;
-  const id = readString(value.id);
-  const providerID = readString(value.providerID);
-  if (!id || !providerID || !OPENCODE_MODEL_NAME.test(id) || !OPENCODE_MODEL_NAME.test(providerID))
-    return null;
-  const variant = readString(value.variant);
-  if (variant !== null && !OPENCODE_MODEL_NAME.test(variant))
-    return null;
-  return { id, providerID, variant };
-};
-
-// service/routes/agent.ts
-var agentRoutes = (deps) => [
-  route("POST", "/prompt", async (context) => {
-    const body = await context.json();
-    const sandboxId = readString(body?.sandbox);
-    const text = readString(body?.text);
-    const conversationId = readString(body?.conversation);
-    const requestProvider = readString(body?.provider);
-    let provider = requestProvider;
-    let model = readString(body?.model);
-    if (!isSandboxId(sandboxId))
-      return context.reply(400, errorBody("Unknown sandbox id."));
-    if (!text)
-      return context.reply(400, errorBody("Write a prompt first."));
-    if (text.length > MAX_PROMPT_CHARS)
-      return context.reply(400, errorBody("That prompt is too long."));
-    if (requestProvider && !isAgentProvider(requestProvider)) {
-      return context.reply(400, errorBody("Unknown agent provider."));
-    }
-    if (conversationId && !isConversationId(conversationId)) {
-      return context.reply(400, errorBody("Unknown conversation id."));
-    }
-    if (conversationId) {
-      try {
-        const conversations = await deps.conversations.get(sandboxId);
-        const known = conversations.find((entry) => entry.id === conversationId) ?? null;
-        if (known) {
-          const catalog = await deps.catalog.get();
-          provider = providerForHarness(catalog.agents, known.lastHarness) ?? provider;
-          model = known.lastModel ?? model;
-        }
-      } catch {}
-    }
-    const options = {
-      provider: provider ?? undefined,
-      model: model && model.length <= MAX_MODEL_CHARS ? model : undefined,
-      reasoning: readString(body?.reasoning) ?? undefined,
-      conversation: conversationId ?? undefined,
-      newConversation: !conversationId
-    };
-    try {
-      const started = await promptSandbox(sandboxId, text, options);
-      deps.conversations.forget(sandboxId);
-      const answer = { ok: true, ...started };
-      return context.reply(200, answer);
-    } catch (failure) {
-      return context.reply(502, errorBody(describeFailure(failure).text));
-    }
-  }),
-  route("POST", "/steer", async (context) => {
-    const body = await context.json();
-    const sandboxId = readString(body?.sandbox);
-    const conversationId = readString(body?.conversation);
-    const text = readString(body?.text);
-    if (!isSandboxId(sandboxId) || !isConversationId(conversationId)) {
-      return context.reply(400, errorBody("Unknown sandbox or conversation."));
-    }
-    if (!text)
-      return context.reply(400, errorBody("Write a message first."));
-    try {
-      await steerSandbox(sandboxId, conversationId, text.slice(0, MAX_PROMPT_CHARS));
-      deps.conversations.forget(sandboxId);
-      return context.reply(200, { ok: true });
-    } catch (failure) {
-      return context.reply(502, errorBody(describeFailure(failure).text));
-    }
-  }),
-  route("POST", "/interrupt", async (context) => {
-    const body = await context.json();
-    const sandboxId = readString(body?.sandbox);
-    const conversationId = readString(body?.conversation);
-    if (!isSandboxId(sandboxId) || !isConversationId(conversationId)) {
-      return context.reply(400, errorBody("Unknown sandbox or conversation."));
-    }
-    try {
-      await interruptSandbox(sandboxId, conversationId);
-      deps.conversations.forget(sandboxId);
-      return context.reply(200, { ok: true });
-    } catch (failure) {
-      return context.reply(502, errorBody(describeFailure(failure).text));
-    }
-  })
-];
-
-// service/routes/agents.ts
-var agentCatalogRoutes = (deps) => [
-  route("GET", "/agents", async (context) => {
-    try {
-      const [catalog, connected] = await Promise.all([deps.catalog.get(), deps.credentials.get()]);
-      const agents = agentOptions(catalog.agents, connected === null ? null : new Set(connected));
-      return context.reply(200, agents);
-    } catch (failure) {
-      return context.reply(502, { error: describeFailure(failure).text });
-    }
-  })
-];
-
-// service/routes/conversations.ts
-var conversationRoutes = (deps) => [
-  route("GET", "/conversations", async (context) => {
-    const sandboxId = context.search.get("sandbox");
-    if (!isSandboxId(sandboxId))
-      return context.reply(400, errorBody("Unknown sandbox id."));
-    try {
-      const body = {
-        conversations: await deps.conversations.get(sandboxId),
-        now: Date.now()
-      };
-      return context.reply(200, body);
-    } catch (failure) {
-      return context.reply(502, errorBody(describeFailure(failure).text));
-    }
-  })
-];
-
 // service/routes/create.ts
 import { isAbsolute as isAbsolute3 } from "node:path";
 
@@ -5732,6 +5065,33 @@ var listSavedSnapshots = async () => {
       sizeBytes: readNumber(row.sizeBytes)
     }];
   }).sort((left, right) => (Date.parse(right.createdAt ?? "") || 0) - (Date.parse(left.createdAt ?? "") || 0));
+};
+
+// service/validation.ts
+var SANDBOX_ID = /^[a-z]{2,8}_[a-z0-9]{4,40}$/;
+var OPENCODE_SESSION_ID = /^ses_[A-Za-z0-9]{6,64}$/;
+var OPENCODE_NAME = /^[A-Za-z0-9._:-]{1,100}$/;
+var OPENCODE_MODEL_NAME = /^[A-Za-z0-9._:@+[\]()/-]{1,200}$/;
+var OPENCODE_REQUEST_ID = /^[A-Za-z0-9_-]{1,128}$/;
+var MAX_PROMPT_CHARS = 20000;
+var MAX_TITLE_CHARS = 200;
+var MAX_DIRECTORY_CHARS = 500;
+var isSandboxId = (value) => typeof value === "string" && SANDBOX_ID.test(value);
+var isOpencodeSessionId = (value) => typeof value === "string" && OPENCODE_SESSION_ID.test(value);
+var isOpencodeRequestId = (value) => typeof value === "string" && OPENCODE_REQUEST_ID.test(value);
+var isOpencodeName = (value) => typeof value === "string" && OPENCODE_NAME.test(value);
+var isAbsoluteDirectory = (value) => typeof value === "string" && value.startsWith("/") && value.length <= MAX_DIRECTORY_CHARS && !value.includes("\x00") && !value.split("/").includes("..");
+var readOpencodeModelRef = (value) => {
+  if (!isRecord(value))
+    return null;
+  const id = readString(value.id);
+  const providerID = readString(value.providerID);
+  if (!id || !providerID || !OPENCODE_MODEL_NAME.test(id) || !OPENCODE_MODEL_NAME.test(providerID))
+    return null;
+  const variant = readString(value.variant);
+  if (variant !== null && !OPENCODE_MODEL_NAME.test(variant))
+    return null;
+  return { id, providerID, variant };
 };
 
 // service/create/request.ts
@@ -5786,6 +5146,23 @@ var readCreateRequest = (body, autoStopMaxHours) => {
       autoStopSeconds: hours * 3600
     }
   };
+};
+
+// service/router.ts
+var route = (method, path, handler) => ({
+  method,
+  path,
+  handler
+});
+var createRouter = (routes) => {
+  const table = new Map;
+  for (const entry of routes) {
+    const key = `${entry.method} ${entry.path}`;
+    if (table.has(key))
+      throw new Error(`Boat service: duplicate route ${key}.`);
+    table.set(key, entry.handler);
+  }
+  return async (context) => table.get(`${context.method} ${context.path}`)?.(context) ?? null;
 };
 
 // service/routes/create.ts
@@ -5857,50 +5234,6 @@ var createRoutes = (deps) => [
   })
 ];
 
-// service/routes/events.ts
-var HISTORY_MAX = 200;
-var eventRoutes = (deps) => [
-  route("GET", "/history", async (context) => {
-    const sandboxId = context.search.get("sandbox");
-    const conversationId = context.search.get("conversation");
-    if (!isSandboxId(sandboxId) || !isConversationId(conversationId)) {
-      return context.reply(400, errorBody("Unknown sandbox or conversation."));
-    }
-    try {
-      const events = await listEvents(sandboxId, conversationId);
-      const known = deps.conversations.peek(sandboxId)?.find((entry) => entry.id === conversationId);
-      const body = {
-        events: events.length > HISTORY_MAX ? events.slice(events.length - HISTORY_MAX) : events,
-        running: known?.running ?? null,
-        now: Date.now()
-      };
-      return context.reply(200, body);
-    } catch (failure) {
-      return context.reply(502, errorBody(describeFailure(failure).text));
-    }
-  }),
-  route("POST", "/watch", async (context) => {
-    const body = await context.json();
-    if (!body || !isSandboxId(body.sandbox) || !isConversationId(body.conversation)) {
-      return context.reply(400, errorBody("Unknown sandbox or conversation."));
-    }
-    try {
-      deps.followers.watch(body.sandbox, body.conversation);
-      return context.reply(200, { ok: true });
-    } catch (failure) {
-      return context.reply(502, errorBody(describeFailure(failure).text));
-    }
-  }),
-  route("POST", "/unwatch", async (context) => {
-    const body = await context.json();
-    if (body && isSandboxId(body.sandbox) && isConversationId(body.conversation)) {
-      deps.followers.unwatch(body.sandbox, body.conversation);
-    }
-    const answer = { ok: true };
-    return context.reply(200, answer);
-  })
-];
-
 // shared/time.ts
 var remaining = (iso) => {
   if (!iso)
@@ -5917,12 +5250,6 @@ var remaining = (iso) => {
   const rest = minutes % 60;
   return rest === 0 ? `${hours}h left` : `${hours}h ${rest}m left`;
 };
-var timeAgo = (iso) => {
-  if (!iso)
-    return "";
-  const at = Date.parse(iso);
-  return Number.isFinite(at) ? timeAgoAt(at) : "";
-};
 var timeAgoAt = (at) => {
   if (!Number.isFinite(at) || at <= 0)
     return "";
@@ -5937,92 +5264,12 @@ var timeAgoAt = (at) => {
     return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 };
-var stamp = (at) => {
-  const date = new Date(at);
-  if (Number.isNaN(date.getTime()))
-    return "";
-  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
-};
-
-// shared/transcript.ts
-var speakerOf = (event) => {
-  if (event.type === "steer")
-    return "steer";
-  if (event.role === "user")
-    return "you";
-  if (event.role === "assistant")
-    return event.model ?? "agent";
-  return event.type || "event";
-};
-var transcriptEntries = (events) => [...events].map((event) => ({
-  id: event.id,
-  at: event.at,
-  role: event.role,
-  speaker: speakerOf(event),
-  status: event.status,
-  streaming: event.streaming,
-  failed: Boolean(event.error) || event.status === "failed" || event.status === "error",
-  text: event.text,
-  tools: event.tools,
-  error: event.error
-})).sort((left, right) => left.at - right.at || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
-var oneLine = (text) => text.replace(/\s+/g, " ").trim();
-var entryMarkdown = (entry) => {
-  const tags = [
-    entry.failed ? "failed" : null,
-    entry.status && entry.status !== "running" ? entry.status : null,
-    entry.streaming ? "streaming" : null
-  ].filter(Boolean);
-  const when = stamp(entry.at);
-  const heading = `**${entry.speaker === "you" ? "You" : entry.speaker}**${when ? ` · ${when}` : ""}${tags.length > 0 ? ` · ${tags.join(", ")}` : ""}`;
-  const lines = [heading];
-  for (const tool of entry.tools) {
-    const detail = oneLine(tool.detail);
-    lines.push(`- \`${tool.name}\`${detail ? ` ${detail}` : ""}${tool.isError ? " (error)" : ""}`);
-  }
-  if (entry.text.trim())
-    lines.push("", entry.text.trim());
-  if (entry.error)
-    lines.push("", `**Error:** ${entry.error}`);
-  return lines.join(`
-`);
-};
-var markdownTranscript = (entries, limit) => {
-  if (entries.length === 0)
-    return { text: "", truncated: false };
-  const blocks = entries.map(entryMarkdown);
-  let text = "";
-  let kept = 0;
-  for (let index = blocks.length - 1;index >= 0; index -= 1) {
-    const block = blocks[index] ?? "";
-    const separator = text ? 2 : 0;
-    if (text.length + block.length + separator > limit)
-      break;
-    text = text ? `${block}
-
-${text}` : block;
-    kept += 1;
-  }
-  if (kept === blocks.length)
-    return { text, truncated: false };
-  const note = "_Older turns were left out to keep this transcript short._";
-  if (kept === 0) {
-    const newest = blocks[blocks.length - 1] ?? "";
-    const room = Math.max(0, limit - note.length - 2);
-    return { text: `${note}
-
-${newest.slice(0, room)}
-
-_…_`, truncated: true };
-  }
-  return { text: `${note}
-
-${text}`, truncated: true };
-};
 
 // service/mentions/render.ts
 var MENTION_TEXT_MAX2 = 16000;
-var CONVERSATIONS_SHOWN = 10;
+var SESSIONS_SHOWN = 10;
+var MESSAGES_SHOWN = 40;
+var TOOL_DETAIL_MAX = 120;
 var sizeOf3 = (sandbox) => {
   const parts = [sandbox.type ?? "default"];
   if (sandbox.memoryGB !== null)
@@ -6035,90 +5282,140 @@ var stateOf = (sandbox) => {
   const left = isUpState(sandbox.state) ? remaining(sandbox.archiveAfter) : "";
   return left ? `${sandbox.state} · ${left}` : sandbox.state;
 };
-var harnessOf = (conversation) => {
-  if (!conversation)
+var modelOf = (session) => {
+  if (!session.model)
     return null;
-  const harness = conversation.lastHarness ?? "agent";
-  const model = conversation.lastModel ? `/${conversation.lastModel}` : "";
-  const prompts = `${conversation.prompts} prompt${conversation.prompts === 1 ? "" : "s"}`;
-  return [
-    `${harness}${model}`,
-    prompts,
-    conversation.running ? "running" : "idle",
-    timeAgo(conversation.lastPromptAt)
-  ].filter(Boolean).join(" · ");
+  return [session.model.providerID, session.model.id, session.model.variant].filter(Boolean).join("/");
 };
-var renderSandboxMention = (sandbox, conversations) => {
+var sessionLine = (session) => [
+  `- \`${session.id}\`: ${session.title ? `"${clip(session.title, 100)}"` : "new session"}`,
+  session.status,
+  session.directory,
+  timeAgoAt(session.updatedAt)
+].filter(Boolean).join(" · ");
+var renderSandboxMention = (sandbox, sessions) => {
   const lines = [
     `## Sandbox ${sandbox.name} (\`${sandbox.id}\`)`,
     "",
     `- State: ${stateOf(sandbox)}`,
     `- Size: ${sizeOf3(sandbox)}`,
     sandbox.environment ? `- Environment: ${sandbox.environment}` : null,
-    `- Conversations: ${conversations.length}`,
+    `- OpenCode sessions: ${sessions.length}`,
     "",
-    conversations.length > 0 ? "**Conversations**" : "_No conversations yet._"
+    sessions.length > 0 ? "**Sessions**" : "_No OpenCode sessions yet._"
   ].filter((line) => line !== null);
-  for (const conversation of conversations.slice(0, CONVERSATIONS_SHOWN)) {
-    const agent = harnessOf(conversation) ?? "agent";
-    const preview = conversation.lastPromptPreview ? ` — "${clip(conversation.lastPromptPreview, 100)}"` : "";
-    lines.push(`- \`${conversation.id}\`: ${agent}${preview}`);
+  for (const session of sessions.slice(0, SESSIONS_SHOWN))
+    lines.push(sessionLine(session));
+  if (sessions.length > SESSIONS_SHOWN) {
+    lines.push(`- and ${sessions.length - SESSIONS_SHOWN} more.`);
   }
-  if (conversations.length > CONVERSATIONS_SHOWN) {
-    lines.push(`- and ${conversations.length - CONVERSATIONS_SHOWN} more.`);
-  }
-  lines.push("", `Run commands inside it with \`boat exec ${sandbox.id} -- <command>\`. Start a new conversation with \`boat prompt ${sandbox.id} --new "<text>"\`, or continue one with \`--resume <conversation>\`.`);
+  lines.push("", `Run commands inside it with \`boat exec ${sandbox.id} -- <command>\`.`, "Sandbox agents run in this sandbox's OpenCode server; open them from the Boat panel's Sessions tab (or the row menu's OpenCode item).");
   return clip(lines.join(`
 `), MENTION_TEXT_MAX2);
 };
-var renderConversationMention = (input) => {
+var oneLine = (text, max) => clip(text.replace(/\s+/g, " ").trim(), max);
+var toolDetail = (tool) => {
+  const input = tool.input ?? {};
+  for (const key of ["command", "description", "filePath", "path", "pattern"]) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim())
+      return oneLine(value, TOOL_DETAIL_MAX);
+  }
+  return "";
+};
+var toolLine = (tool) => {
+  const detail = toolDetail(tool);
+  const failed = tool.status === "error";
+  return `- \`${tool.name}\`${detail ? ` — ${detail}` : ""}${failed ? " (failed)" : ""}`;
+};
+var textOf = (parts) => parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join(`
+`).trim();
+var messageLines = (message) => {
+  const lines = [];
+  const text = textOf(message.parts);
+  if (message.role === "user") {
+    if (text)
+      lines.push(`**You:** ${text}`, "");
+    return lines;
+  }
+  if (text)
+    lines.push(text, "");
+  for (const part of message.parts) {
+    if (part.kind === "tool")
+      lines.push(toolLine(part.tool));
+  }
+  if (message.notice)
+    lines.push(`- ${oneLine(message.notice, 400)}`);
+  if (message.error)
+    lines.push(`> ${oneLine(message.error, 600)}`, "");
+  if (lines.length > 0 && lines[lines.length - 1] !== "")
+    lines.push("");
+  return lines;
+};
+var renderSessionMention = (input) => {
   const name = input.sandbox?.name ?? input.sandboxId;
   const lines = [
-    `## Sandbox ${name} (\`${input.sandboxId}\`) — conversation \`${input.conversationId}\``,
+    `## Sandbox ${name} (\`${input.sandboxId}\`) — OpenCode session \`${input.sessionId}\``,
     ""
   ];
   if (input.sandbox) {
     lines.push(`- State: ${stateOf(input.sandbox)}`, `- Size: ${sizeOf3(input.sandbox)}`);
   }
-  const agent = harnessOf(input.conversation);
-  if (agent)
-    lines.push(`- Agent: ${agent}`);
-  lines.push(`- Continue: \`boat prompt ${input.sandboxId} --resume ${input.conversationId} "<text>"\``, `- Commands: \`boat exec ${input.sandboxId} -- <command>\``, "", "**Transcript** (oldest first)", "");
+  if (input.session) {
+    lines.push(`- Title: ${input.session.title ?? "New session"}`);
+    const directory = input.session.directory;
+    if (directory)
+      lines.push(`- Directory: \`${directory}\``);
+    const agent = [input.session.agent, modelOf(input.session)].filter(Boolean).join(" · ");
+    if (agent)
+      lines.push(`- Agent: ${agent}`);
+    lines.push(`- Status: ${input.session.status}`);
+  }
+  lines.push(`- Commands: \`boat exec ${input.sandboxId} -- <command>\``, "", "**Transcript** (oldest first)", "");
   const header = lines.join(`
 `);
-  const entries = transcriptEntries(input.events);
-  if (entries.length === 0)
-    return clip(`${header}_No events yet._`, MENTION_TEXT_MAX2);
-  const { text } = markdownTranscript(entries, Math.max(400, MENTION_TEXT_MAX2 - header.length - 2));
-  return clip(`${header}${text}`, MENTION_TEXT_MAX2);
+  const shown = input.messages.slice(-MESSAGES_SHOWN);
+  const omitted = input.messages.length - shown.length;
+  const body = [];
+  if (omitted > 0)
+    body.push(`_${omitted} older messages were left out._`, "");
+  for (const message of shown) {
+    if (message.role !== "user" && message.role !== "assistant")
+      continue;
+    body.push(...messageLines(message));
+  }
+  if (body.length === 0)
+    return clip(`${header}_No messages yet._`, MENTION_TEXT_MAX2);
+  return clip(`${header}${body.join(`
+`)}`, MENTION_TEXT_MAX2);
 };
 
 // service/mentions/rows.ts
 var MENTION_ROW_MAX = 20;
 var MENTION_TEXT_MAX3 = 120;
 var mentionSandboxId = (sandboxId) => `sandbox:${sandboxId}`;
-var mentionConversationId = (sandboxId, conversationId) => `conversation:${sandboxId}:${conversationId}`;
+var mentionSessionId = (sandboxId, sessionId) => `session:${sandboxId}:${sessionId}`;
 var parseMentionId = (id) => {
   if (!id)
     return null;
-  const [kind, sandboxId, conversationId] = id.split(":");
+  const [kind, sandboxId, sessionId] = id.split(":");
   if (!isSandboxId(sandboxId))
     return null;
   if (kind === "sandbox")
     return { kind, sandboxId };
-  if (kind === "conversation" && isConversationId(conversationId)) {
-    return { kind, sandboxId, conversationId };
+  if (kind === "session" && isOpencodeSessionId(sessionId)) {
+    return { kind, sandboxId, sessionId };
   }
   return null;
 };
-var conversationSubtitle = (sandbox, conversation) => {
-  const harness = conversation.lastHarness ?? "agent";
-  const model = conversation.lastModel ? `/${conversation.lastModel}` : "";
+var sessionSubtitle = (sandbox, session) => {
+  const agent = session.agent ?? "agent";
+  const model = session.model ? `/${session.model.id}` : "";
   return [
     sandbox.name || sandbox.id,
-    `${harness}${model}`,
-    conversation.running ? "running" : "idle",
-    timeAgo(conversation.lastPromptAt)
+    `${agent}${model}`,
+    session.status,
+    timeAgoAt(session.updatedAt)
   ].filter(Boolean).join(" · ");
 };
 var sandboxSubtitle = (sandbox) => {
@@ -6139,13 +5436,13 @@ var mentionRows = (input) => {
   });
   const rows = [];
   for (const sandbox of sandboxes) {
-    const conversations = [...input.conversations(sandbox.id) ?? []].sort((left, right) => Number(right.running) - Number(left.running) || (Date.parse(right.lastPromptAt ?? "") || 0) - (Date.parse(left.lastPromptAt ?? "") || 0));
-    for (const conversation of conversations) {
-      const title = clip(conversation.lastPromptPreview ?? "New conversation", MENTION_TEXT_MAX3);
-      const subtitle = clip(conversationSubtitle(sandbox, conversation), MENTION_TEXT_MAX3);
-      if (!matches(needle, title, subtitle, sandbox.id, conversation.id))
+    const sessions = [...input.sessions(sandbox.id) ?? []].sort((left, right) => Number(right.status === "busy") - Number(left.status === "busy") || right.updatedAt - left.updatedAt);
+    for (const session of sessions) {
+      const title = clip(session.title ?? "New session", MENTION_TEXT_MAX3);
+      const subtitle = clip(sessionSubtitle(sandbox, session), MENTION_TEXT_MAX3);
+      if (!matches(needle, title, subtitle, sandbox.id, session.id))
         continue;
-      rows.push({ id: mentionConversationId(sandbox.id, conversation.id), title, subtitle });
+      rows.push({ id: mentionSessionId(sandbox.id, session.id), title, subtitle });
       if (rows.length >= MENTION_ROW_MAX)
         return rows;
     }
@@ -6169,11 +5466,11 @@ var mentionRoutes = (deps) => [
       const snapshot = deps.sandboxes.peek() ?? await deps.sandboxes.get();
       for (const sandbox of snapshot.sandboxes) {
         if (isUpState(sandbox.state))
-          deps.agents.check(sandbox.id);
+          deps.sessions.check(sandbox.id);
       }
       const items = mentionRows({
         sandboxes: snapshot.sandboxes,
-        conversations: (sandboxId) => deps.conversations.peek(sandboxId),
+        sessions: (sandboxId) => deps.sessions.peek(sandboxId),
         projectIds: directory ? deps.ranking.projectIds(directory) : null,
         query: readString(body?.query) ?? ""
       });
@@ -6195,20 +5492,23 @@ var mentionRoutes = (deps) => [
       if (mention.kind === "sandbox") {
         if (!sandbox)
           return context.reply(404, { error: "That sandbox is not in the list any more." });
-        const conversations = deps.conversations.peek(sandbox.id) ?? await listConversations(sandbox.id);
-        const answer = { text: renderSandboxMention(sandbox, conversations) };
+        const sessions = deps.sessions.peek(sandbox.id) ?? await deps.sessions.get(sandbox.id);
+        const answer = { text: renderSandboxMention(sandbox, sessions) };
         return context.reply(200, answer);
       }
-      const cached = deps.conversations.peek(mention.sandboxId);
-      const conversation = cached?.find((entry) => entry.id === mention.conversationId) ?? null;
-      const events = await listEvents(mention.sandboxId, mention.conversationId, { timeoutMs: 8000 });
+      const history = await deps.opencode.run(mention.sandboxId, async (connection) => {
+        const session = await readSession(connection, mention.sessionId);
+        if (!session)
+          throw new Error("That OpenCode session no longer exists.");
+        return { session, ...await readSessionMessages(connection, mention.sessionId) };
+      });
       const answer = {
-        text: renderConversationMention({
+        text: renderSessionMention({
           sandbox,
           sandboxId: mention.sandboxId,
-          conversationId: mention.conversationId,
-          conversation,
-          events
+          sessionId: mention.sessionId,
+          session: history.session,
+          messages: history.messages
         })
       };
       return context.reply(200, answer);
@@ -6217,109 +5517,6 @@ var mentionRoutes = (deps) => [
     }
   })
 ];
-
-// service/opencode/reads.ts
-var SESSION_PAGE = 100;
-var MESSAGE_PAGE = 200;
-var MAX_MESSAGE_PAGES = 10;
-var rowsOf = (value) => {
-  if (Array.isArray(value))
-    return value;
-  return isRecord(value) && Array.isArray(value.data) ? value.data : [];
-};
-var readSessions = async (connection, directory = null) => {
-  const raw = await connection.client.session.list({
-    limit: SESSION_PAGE,
-    order: "desc",
-    ...directory ? { directory } : {}
-  });
-  return rowsOf(raw).flatMap((entry) => {
-    const session = normalizeSession(entry);
-    return session ? [session] : [];
-  });
-};
-var readSession = async (connection, sessionID) => {
-  const raw = await connection.client.session.get({ sessionID });
-  return normalizeSession(raw);
-};
-var readSessionMessages = async (connection, sessionID) => {
-  const rows = [];
-  const seen = new Set;
-  let cursor = null;
-  for (let page = 0;page < MAX_MESSAGE_PAGES; page += 1) {
-    const raw = await connection.client.message.list({
-      sessionID,
-      limit: MESSAGE_PAGE,
-      ...cursor ? { cursor } : { order: "asc" }
-    });
-    for (const row of rowsOf(raw)) {
-      const id = isRecord(row) ? readString(row.id) : null;
-      if (id && seen.has(id))
-        continue;
-      if (id)
-        seen.add(id);
-      rows.push(row);
-    }
-    const cursors = isRecord(raw) && isRecord(raw.cursor) ? raw.cursor : null;
-    cursor = readString(cursors?.next);
-    if (!cursor) {
-      return {
-        messages: rows.flatMap((row) => {
-          const message = normalizeMessage(row, sessionID);
-          return message ? [message] : [];
-        }),
-        truncated: false
-      };
-    }
-  }
-  return {
-    messages: rows.flatMap((row) => {
-      const message = normalizeMessage(row, sessionID);
-      return message ? [message] : [];
-    }),
-    truncated: true
-  };
-};
-var readPermissions = async (connection, sessionID) => {
-  const raw = await connection.client.permission.list({ sessionID });
-  return rowsOf(raw).flatMap((entry) => {
-    const request = normalizePermissionRequest(entry);
-    return request ? [request] : [];
-  });
-};
-var readQuestions = async (connection, sessionID) => {
-  const raw = await connection.client.session.form.list({ sessionID });
-  return rowsOf(raw).flatMap((entry) => {
-    const request = normalizeQuestionRequest(entry);
-    return request ? [request] : [];
-  });
-};
-var readCatalog = async (connection) => {
-  const [agentsRaw, providersRaw, modelsRaw, defaultRaw] = await Promise.all([
-    connection.client.agent.list(),
-    connection.client.provider.list(),
-    connection.client.model.list(),
-    connection.client.model.default()
-  ]);
-  const agents = rowsOf(agentsRaw).flatMap((entry) => {
-    const agent = normalizeAgent(entry);
-    return agent ? [agent] : [];
-  });
-  const providers = rowsOf(providersRaw).flatMap((entry) => {
-    const provider = normalizeProvider(entry);
-    return provider ? [provider] : [];
-  });
-  const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]));
-  const models = normalizeModels(rowsOf(modelsRaw), providerNames);
-  const defaultData = isRecord(defaultRaw) && isRecord(defaultRaw.data) ? defaultRaw.data : defaultRaw;
-  return {
-    agents,
-    providers,
-    models,
-    defaultAgent: agents.find((agent) => agent.mode === "primary" && !agent.hidden)?.id ?? null,
-    defaultModel: readModelRef(defaultData)
-  };
-};
 
 // service/routes/opencode-catalog.ts
 var opencodeCatalogRoutes = (deps) => [
@@ -6622,7 +5819,7 @@ var sandboxRoutes = (deps) => [
         ...summaryOf(entry.sandbox),
         matchedBy: entry.matchedBy,
         inProject: entry.inProject,
-        agentRunning: deps.agents.has(entry.sandbox.id)
+        agentRunning: deps.sessions.busy(entry.sandbox.id)
       })),
       error: snapshot.failure?.text ?? null,
       now: Date.now(),
@@ -6735,11 +5932,7 @@ var context = createServiceContext({
 var route2 = createRouter([
   ...statusRoutes(context),
   ...sandboxRoutes(context),
-  ...conversationRoutes(context),
-  ...eventRoutes(context),
   ...createRoutes(context),
-  ...agentRoutes(context),
-  ...agentCatalogRoutes(context),
   ...opencodeSessionRoutes(context),
   ...opencodeChatRoutes(context),
   ...opencodeCatalogRoutes(context),
@@ -6778,7 +5971,7 @@ var server = http.createServer((req, res) => {
   });
 });
 server.listen(port, "127.0.0.1", () => {
-  installFollowerCleanup(context.followers, [context.opencodeFollowers]);
+  installFollowerCleanup(context.opencodeFollowers);
   context.refresh().catch(() => {});
 });
 process.on("unhandledRejection", (reason) => {
