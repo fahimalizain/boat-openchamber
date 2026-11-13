@@ -14,7 +14,7 @@
   },
   "type": "module",
   "scripts": {
-    "build": "npx -y bun@latest x openchamber-guest-bundle --node service/main.ts service/main.js",
+    "build": "npx -y bun@latest x openchamber-guest-bundle --node service/main.ts service/main.js && npx -y bun@latest x openchamber-guest-bundle panel/main.ts panel/main.js",
     "check": "npx -y bun@latest x openchamber-guest-check"
   },
   "openchamber": {
@@ -43,6 +43,9 @@
           "interval": 5000
         },
         "title": "Boat"
+      },
+      "panel": {
+        "entry": "panel/index.html"
       },
       "instructions": true
     }

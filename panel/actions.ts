@@ -1,0 +1,190 @@
+/** What the panel asks for: prompts, steers, interrupts, sandbox commands. */
+import { isAgentProvider } from '../shared/agent.ts';
+import type { SandboxAction } from '../shared/types.ts';
+import type { ServiceClient } from './api.ts';
+import type { Loaders } from './data.ts';
+import type { Cell, Reporter } from './state.ts';
+
+export type Actions = {
+  boot: () => Promise<void>;
+  setDirectory: (directory: string | null) => void;
+  selectSandbox: (sandboxId: string) => Promise<void>;
+  selectConversation: (conversationId: string | null) => Promise<void>;
+  setDraft: (text: string) => void;
+  setProvider: (provider: string) => void;
+  setModel: (model: string) => void;
+  submit: () => Promise<void>;
+  interrupt: () => Promise<void>;
+  runSandboxAction: (action: SandboxAction) => Promise<void>;
+};
+
+const DONE_MESSAGES: Record<SandboxAction, string> = {
+  stop: 'Sandbox stopping.',
+  resume: 'Sandbox resuming.',
+  extend: 'Sandbox extended by an hour.',
+  desktop: 'Opening the sandbox desktop.',
+};
+
+export const createActions = (deps: {
+  cell: Cell;
+  client: ServiceClient;
+  loaders: Loaders;
+  reporter: Reporter;
+  toast: (kind: 'info' | 'success' | 'error', message: string) => void;
+  openUrl: (url: string) => Promise<void>;
+}): Actions => {
+  const { cell, client, loaders, reporter, toast, openUrl } = deps;
+
+  const refreshAfterAction = async (): Promise<void> => {
+    await loaders.sandboxes();
+    await loaders.conversations({ autoSelect: false });
+    if (cell.get().conversationId) await loaders.history();
+  };
+
+  const boot = async (): Promise<void> => {
+    try {
+      await loaders.sandboxes();
+      cell.patch({ loading: false, banner: null });
+    } catch (failure) {
+      cell.patch({ loading: false });
+      reporter.fail('Boat could not start', failure);
+    }
+  };
+
+  const selectSandbox = async (sandboxId: string): Promise<void> => {
+    const state = cell.get();
+    if (sandboxId === state.sandboxId) return;
+
+    const previousSandbox = state.sandboxId;
+    const previousConversation = state.conversationId;
+    if (previousSandbox && previousConversation) {
+      void client.unwatch(previousSandbox, previousConversation).catch(() => {});
+    }
+
+    cell.patch({
+      sandboxId,
+      conversationId: null,
+      conversations: [],
+      events: new Map(),
+      running: false,
+      live: false,
+      watchBroken: false,
+    });
+
+    try {
+      await loaders.conversations({ autoSelect: true });
+    } catch (failure) {
+      reporter.fail('Could not list conversations', failure);
+    }
+  };
+
+  const submit = async (): Promise<void> => {
+    const state = cell.get();
+    const sandboxId = state.sandboxId;
+    const text = state.draft.trim();
+    if (!sandboxId || state.busy) return;
+    if (!text) {
+      toast('info', 'Write a message first.');
+      return;
+    }
+
+    const conversationId = state.conversationId;
+    const steering = Boolean(conversationId) && state.running;
+    cell.patch({ busy: true });
+
+    try {
+      if (steering && conversationId) {
+        await client.steer({ sandbox: sandboxId, conversation: conversationId, text });
+        toast('success', 'Message added to the running turn.');
+      } else {
+        const answer = await client.prompt({
+          sandbox: sandboxId,
+          text,
+          ...(conversationId
+            ? { conversation: conversationId }
+            : { provider: state.provider, ...(state.model.trim() ? { model: state.model.trim() } : {}) }),
+        });
+        toast('success', conversationId ? 'Prompt sent.' : 'Conversation started.');
+
+        cell.get().draft = '';
+        await loaders.conversations({ autoSelect: false });
+        const next = answer.conversationId
+          ?? conversationId
+          ?? cell.get().conversations.find((entry) => entry.current)?.id
+          ?? cell.get().conversations[0]?.id
+          ?? null;
+        if (next && next !== cell.get().conversationId) await loaders.openConversation(next);
+        else cell.patch({ running: true });
+      }
+
+      cell.get().draft = '';
+      reporter.setBanner(null);
+    } catch (failure) {
+      reporter.fail('The prompt did not go through', failure);
+    } finally {
+      cell.patch({ busy: false });
+    }
+  };
+
+  const interrupt = async (): Promise<void> => {
+    const state = cell.get();
+    if (!state.sandboxId || !state.conversationId || state.busy) return;
+    cell.patch({ busy: true });
+    try {
+      await client.interrupt({ sandbox: state.sandboxId, conversation: state.conversationId });
+      toast('success', 'Interrupted.');
+      await refreshAfterAction();
+    } catch (failure) {
+      reporter.fail('Could not interrupt', failure);
+    } finally {
+      cell.patch({ busy: false });
+    }
+  };
+
+  const runSandboxAction = async (action: SandboxAction): Promise<void> => {
+    const state = cell.get();
+    if (!state.sandboxId || state.busy) return;
+    cell.patch({ busy: true });
+    try {
+      const answer = await client.action({ sandbox: state.sandboxId, action });
+      if (action === 'desktop') {
+        if (!answer.url) throw new Error('This sandbox has no desktop to open.');
+        await openUrl(answer.url);
+        toast('success', DONE_MESSAGES.desktop);
+      } else {
+        toast('success', DONE_MESSAGES[action]);
+        reporter.setBanner(null);
+        await refreshAfterAction();
+      }
+    } catch (failure) {
+      reporter.fail('That action did not go through', failure);
+    } finally {
+      cell.patch({ busy: false });
+    }
+  };
+
+  return {
+    boot,
+    setDirectory: (directory) => {
+      const state = cell.get();
+      if (directory === state.directory) return;
+      state.directory = directory;
+      cell.notify();
+      void loaders.sandboxes().catch((failure) => reporter.fail('Could not reload sandboxes', failure));
+    },
+    selectSandbox,
+    selectConversation: loaders.openConversation,
+    setDraft: (text) => {
+      cell.get().draft = text;
+    },
+    setProvider: (provider) => {
+      if (isAgentProvider(provider)) cell.patch({ provider });
+    },
+    setModel: (model) => {
+      cell.get().model = model;
+    },
+    submit,
+    interrupt,
+    runSandboxAction,
+  };
+};

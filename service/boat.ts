@@ -1,15 +1,13 @@
 /**
- * A small typed wrapper over the `boat` CLI.
- *
- * Everything goes through `execFile` with an argv array (never a shell string),
- * always with `--json --no-update` plus `BOAT_NO_UPDATE=1`. The CLI is resolved
- * without relying on the user's environment: PATH first, then known install
- * locations, then `BOAT_BIN` as an override.
+ * The `boat` CLI adapter: binary lookup, argv execution, JSON parsing. It knows
+ * nothing about sandboxes or conversations.
  */
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { accessSync, constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
+
+import { isRecord, readString } from '../shared/json.ts';
 
 export type BoatErrorCode = 'missing-cli' | 'not-signed-in' | 'command-failed';
 
@@ -23,73 +21,16 @@ export class BoatError extends Error {
   }
 }
 
-/** The states `boat list` reports. Kept open because the CLI may add more. */
-export type SandboxState =
-  | 'provisioned'
-  | 'cloning'
-  | 'ready'
-  | 'idle'
-  | 'running'
-  | 'stopping'
-  | 'stopped'
-  | 'error'
-  | (string & {});
+export type RunOptions = { timeoutMs?: number };
 
-export type Sandbox = {
-  id: string;
-  name: string;
-  state: SandboxState;
-  /** Machine type: small, default, large or xlarge. */
-  type: string | null;
-  vcpu: number | null;
-  memoryGB: number | null;
-  createdAt: string | null;
-  /** When the sandbox's current lifetime runs out; null when it never auto-stops. */
-  archiveAfter: string | null;
-  stoppedAt: string | null;
-  /** Stable app URL for the sandbox subdomain. */
-  url: string | null;
-  ttlSeconds: number | null;
-  desktopAvailable: boolean;
-  environment: string | null;
-  health: string | null;
-  sshEndpoint: string | null;
-};
-
-export type Conversation = {
-  id: string | null;
-  running: boolean;
-};
-
-export type PlanLimits = {
-  canStart: boolean;
-  blockedReason: string | null;
-  active: number | null;
-  maxActive: number | null;
-};
-
-export type RunOptions = {
-  timeoutMs?: number;
-};
+export const MISSING_CLI_MESSAGE =
+  'The boat CLI was not found. Install it from https://docs.boat.dev and restart this extension.';
 
 const DEFAULT_TIMEOUT_MS = 20_000;
-const MUTATION_TIMEOUT_MS = 25_000;
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
-const isRecord = (value: unknown): value is Record<string, unknown> => (
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-);
-
-const readString = (value: unknown): string | null => (
-  typeof value === 'string' && value.trim().length > 0 ? value : null
-);
-
-const readNumber = (value: unknown): number | null => (
-  typeof value === 'number' && Number.isFinite(value) ? value : null
-);
-
-/** JSON, or JSONL as several `boat` commands print it. */
-const parseJsonOutput = (output: string): unknown => {
+/** JSON, or JSONL as `boat prompt`, `boat events` and `boat conversations` print it. */
+export const parseBoatJson = (output: string): unknown => {
   const text = output.trim();
   if (!text) return null;
   try {
@@ -111,7 +52,7 @@ const parseJsonOutput = (output: string): unknown => {
 };
 
 const errorMessage = (stdout: string, stderr: string, fallback: string): string => {
-  const parsed = parseJsonOutput(stdout) ?? parseJsonOutput(stderr);
+  const parsed = parseBoatJson(stdout) ?? parseBoatJson(stderr);
   const record = isRecord(parsed) ? parsed : Array.isArray(parsed) && isRecord(parsed[0]) ? parsed[0] : null;
   if (record) {
     const nested = isRecord(record.error) ? record.error : null;
@@ -140,15 +81,16 @@ const onPath = (name: string): string | null => {
   return null;
 };
 
-let resolvedBinary: string | null | undefined;
+let cachedBinary: string | null = null;
 
 /**
  * The `boat` binary, or null when it is not installed. The service gets no user
  * environment, so a bare `boat` on PATH cannot be assumed; the ASCII installer
- * location is checked too.
+ * location is checked too. A miss is not cached, so installing the CLI later
+ * starts working without a restart.
  */
 export const boatBinary = (): string | null => {
-  if (resolvedBinary !== undefined) return resolvedBinary;
+  if (cachedBinary) return cachedBinary;
   const candidates = [
     process.env.BOAT_BIN?.trim(),
     onPath('boat'),
@@ -156,36 +98,35 @@ export const boatBinary = (): string | null => {
     '/opt/homebrew/bin/boat',
     '/usr/local/bin/boat',
   ].filter((candidate): candidate is string => Boolean(candidate));
-  resolvedBinary = candidates.find(isExecutable) ?? null;
-  return resolvedBinary;
+  cachedBinary = candidates.find(isExecutable) ?? null;
+  return cachedBinary;
 };
 
-/** Drop the memoized path, so a newly installed CLI is picked up. */
-export const resetBoatBinary = (): void => {
-  resolvedBinary = undefined;
-};
-
-const run = async (command: string, args: string[], options: RunOptions = {}): Promise<unknown> => {
+const requireBinary = (): string => {
   const binary = boatBinary();
-  if (!binary) {
-    throw new BoatError('missing-cli', 'The boat CLI was not found. Install it from https://docs.boat.dev and restart this extension.');
-  }
+  if (!binary) throw new BoatError('missing-cli', MISSING_CLI_MESSAGE);
+  return binary;
+};
+
+/** The CLI's environment: the service's own, plus the update opt-out. */
+export const boatEnv = (): NodeJS.ProcessEnv => ({ ...process.env, BOAT_NO_UPDATE: '1' });
+
+/** Runs one command with `--json --no-update` and returns its parsed output. */
+export const runBoat = async (command: string, args: string[], options: RunOptions = {}): Promise<unknown> => {
+  const binary = requireBinary();
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const stdout = await new Promise<string>((resolve, reject) => {
     execFile(
       binary,
       [command, '--json', '--no-update', ...args],
-      {
-        timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        maxBuffer: MAX_OUTPUT_BYTES,
-        env: { ...process.env, BOAT_NO_UPDATE: '1' },
-      },
+      { timeout: timeoutMs, maxBuffer: MAX_OUTPUT_BYTES, env: boatEnv() },
       (error, out, err) => {
         if (!error) {
           resolve(out);
           return;
         }
         const message = error.killed
-          ? `boat ${command} did not finish in ${Math.round((options.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000)}s.`
+          ? `boat ${command} did not finish in ${Math.round(timeoutMs / 1000)}s.`
           : errorMessage(out, err, error.message || 'The boat CLI failed.');
         const code: BoatErrorCode = /not signed in|signed out|session expired|boat login/i.test(message)
           ? 'not-signed-in'
@@ -194,87 +135,14 @@ const run = async (command: string, args: string[], options: RunOptions = {}): P
       },
     );
   });
-  return parseJsonOutput(stdout);
+  return parseBoatJson(stdout);
 };
 
-export const listSandboxes = async (): Promise<Sandbox[]> => {
-  const data = await run('list', ['--all']);
-  const rows = Array.isArray(data)
-    ? data
-    : isRecord(data) && Array.isArray(data.sandboxes)
-      ? data.sandboxes
-      : [];
-  return rows.filter(isRecord).flatMap((row) => {
-    const id = readString(row.id);
-    if (!id) return [];
-    return [{
-      id,
-      name: readString(row.name) ?? id,
-      state: readString(row.state) ?? 'unknown',
-      type: readString(row.type),
-      vcpu: readNumber(row.vcpu),
-      memoryGB: readNumber(row.memoryGB),
-      createdAt: readString(row.createdAt),
-      archiveAfter: readString(row.archiveAfter),
-      stoppedAt: readString(row.stoppedAt),
-      url: readString(row.url),
-      ttlSeconds: readNumber(row.ttlSeconds),
-      desktopAvailable: row.desktopAvailable === true,
-      environment: readString(row.environment),
-      health: readString(row.health),
-      sshEndpoint: readString(row.sshEndpoint),
-    }];
-  });
-};
-
-export const stopSandbox = async (id: string): Promise<void> => {
-  await run('stop', [id, '--yes'], { timeoutMs: MUTATION_TIMEOUT_MS });
-};
-
-export const resumeSandbox = async (id: string): Promise<void> => {
-  await run('resume', [id, '--no-wait'], { timeoutMs: MUTATION_TIMEOUT_MS });
-};
-
-/**
- * Sets the sandbox's remaining lifetime. `--ttl` is exact, where `--hours N`
- * would replace the remaining time and could shorten a sandbox.
- */
-export const extendSandbox = async (id: string, seconds: number): Promise<void> => {
-  await run('extend', [id, '--ttl', String(Math.max(60, Math.round(seconds)))], { timeoutMs: MUTATION_TIMEOUT_MS });
-};
-
-export const desktopUrl = async (id: string): Promise<string | null> => {
-  const data = await run('desktop', [id], { timeoutMs: 10_000 });
-  if (!isRecord(data)) return null;
-  const url = readString(data.desktopUrl) ?? readString(data.viewerUrl);
-  return url && /^https?:\/\//i.test(url) ? url : null;
-};
-
-export const listConversations = async (id: string): Promise<Conversation[]> => {
-  const data = await run('conversations', [id], { timeoutMs: 10_000 });
-  const rows = Array.isArray(data)
-    ? data
-    : isRecord(data) && Array.isArray(data.conversations)
-      ? data.conversations
-      : [];
-  return rows.filter(isRecord).map((row) => ({
-    id: readString(row.id) ?? readString(row.conversationId),
-    running:
-      row.running === true
-      || row.isRunning === true
-      || row.active === true
-      || readString(row.state) === 'running'
-      || readString(row.status) === 'running',
-  }));
-};
-
-export const readLimits = async (): Promise<PlanLimits> => {
-  const data = await run('limits', [], { timeoutMs: 15_000 });
-  const record = isRecord(data) ? data : {};
-  return {
-    canStart: record.canStart !== false,
-    blockedReason: readString(record.blockedReason) ?? readString(record.startBlockedReason),
-    active: readNumber(record.activeSandboxes),
-    maxActive: readNumber(record.maxActiveSandboxes),
-  };
-};
+/** Starts a streaming command (`events --follow`, `prompt`) the service reads line by line. */
+export const spawnBoat = (command: string, args: string[]): ChildProcess => (
+  spawn(requireBinary(), [command, '--json', '--no-update', ...args], {
+    env: boatEnv(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+);
