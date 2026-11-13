@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 — 2026-11-13
+
+- The panel is split into **Sandboxes** and **Conversations** tabs; the
+  redundant BOAT heading is gone and the LIVE badge now sits above the chat.
+- Sandboxes tab: New sandbox at the top, “This project” / “Other sandboxes”
+  groups, and one row per sandbox with its state, size, environment and
+  auto-stop time. Each row carries Stop or Resume (never both, Stop asks twice),
+  with Extend 1h, Desktop and Copy in an overflow menu; the row opens the
+  sandbox’s conversations. A running-agent badge shows when known.
+- Conversations tab: a compact sandbox switcher and state line, an inline Resume
+  banner when the sandbox is stopped, and the unchanged conversation list, chat
+  and composer.
+- The last tab and the default-tab rule (Conversations only when the remembered
+  sandbox has conversations) are stored per device.
+
 ## 0.3.3 — 2026-11-13
 
 - The composer's Agent, Model and Reasoning selects sit in one horizontal row

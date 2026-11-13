@@ -10,7 +10,7 @@ import { describeFailure } from '../failures.ts';
 import { route, type Route } from '../router.ts';
 import { isSandboxId } from '../validation.ts';
 
-type Deps = Pick<ServiceContext, 'sandboxes' | 'scoper' | 'projects' | 'desktop' | 'perform' | 'refresh' | 'forget'>;
+type Deps = Pick<ServiceContext, 'sandboxes' | 'scoper' | 'projects' | 'agents' | 'desktop' | 'perform' | 'refresh' | 'forget'>;
 
 const summaryOf = (sandbox: Sandbox): SandboxSummary => ({
   id: sandbox.id,
@@ -45,6 +45,7 @@ export const sandboxRoutes = (deps: Deps): Route[] => [
         ...summaryOf(entry.sandbox),
         matchedBy: entry.matchedBy,
         inProject: entry.inProject,
+        agentRunning: deps.agents.has(entry.sandbox.id),
       })),
       error: snapshot.failure?.text ?? null,
       now: Date.now(),

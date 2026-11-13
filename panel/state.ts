@@ -2,6 +2,7 @@
 import type { AgentDto, ScopedSandboxSummary } from '../shared/routes.ts';
 import type { Conversation, UiEvent } from '../shared/types.ts';
 import { initialCreateState, type CreateState } from './create-state.ts';
+import type { PanelTab } from './tab.ts';
 
 /** The message a caught failure carries, or a plain fallback. */
 export const messageOf = (failure: unknown): string => (
@@ -40,6 +41,7 @@ export type PanelState = {
   compactList: boolean;
   /** A just-started conversation allowed to be missing from the list for a moment. */
   pendingConversationAt: number | null;
+  tab: PanelTab;
 };
 
 export type Toast = (kind: 'info' | 'success' | 'error', message: string) => void;
@@ -66,6 +68,7 @@ export const initialState = (directory: string | null): PanelState => ({
   create: initialCreateState(),
   compactList: true,
   pendingConversationAt: null,
+  tab: 'sandboxes',
 });
 
 export type Cell = {

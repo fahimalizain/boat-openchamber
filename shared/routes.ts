@@ -17,6 +17,8 @@ export const errorBody = (error: string): ErrorBody => ({ error });
 export type ScopedSandboxSummary = SandboxSummary & {
   matchedBy: ProjectMatch | null;
   inProject: boolean;
+  /** True while one of the sandbox's conversations has a turn running. */
+  agentRunning: boolean;
 };
 
 export type SandboxesResponse = {

@@ -10,8 +10,10 @@ import { createBannerView } from './views/banner.ts';
 import { createComposer } from './views/composer.ts';
 import { createConversationList } from './views/conversation-list.ts';
 import { createConversationView } from './views/conversation-view.ts';
+import { createConversationsHeader } from './views/conversations-header.ts';
 import { createCreateForm } from './views/create-form.ts';
-import { createSandboxHeader } from './views/sandbox-header.ts';
+import { createSandboxListView } from './views/sandbox-list.ts';
+import { createTabsView } from './views/tabs.ts';
 
 type Host = ReturnType<typeof connectHost>;
 
@@ -47,25 +49,34 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
 
   const banner = createBannerView(byId('banner-inner'), byId('banner'));
 
-  const header = createSandboxHeader(
+  const tabs = createTabsView(
+    { tabs: byId('tabs'), sandboxes: byId('sandboxes-tab'), conversations: byId('conversations-tab') },
+    { onSelect: store.setTab },
+  );
+
+  const sandboxList = createSandboxListView(byId('sandbox-list'), {
+    onNew: () => store.openCreate('clean'),
+    onOpen: (sandboxId) => {
+      void store.openSandbox(sandboxId);
+    },
+    onAction: (sandboxId, action) => {
+      if (action === 'copy') store.openCreate('copy', sandboxId);
+      else void store.runSandboxAction(action, sandboxId);
+    },
+  });
+
+  const conversationsHeader = createConversationsHeader(
     {
-      groups: byId('sandbox-groups'),
-      select: byId('sandbox-select'),
-      meta: byId('sandbox-meta'),
-      actions: byId('sandbox-actions'),
-      live: byId('live'),
+      select: byId('conv-sandbox-select'),
+      state: byId('conv-sandbox-state'),
+      banner: byId('conv-resume'),
     },
     {
       onSelect: (sandboxId) => {
         void store.selectSandbox(sandboxId);
       },
-      onAction: (action) => {
-        void store.runSandboxAction(action);
-      },
-      onNew: () => store.openCreate('clean'),
-      onCopy: () => {
-        const sandboxId = store.getState().sandboxId;
-        if (sandboxId) store.openCreate('copy', sandboxId);
+      onResume: () => {
+        void store.runSandboxAction('resume');
       },
     },
   );
@@ -83,7 +94,12 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
   );
 
   const conversation = createConversationView(
-    { chat: byId('chat'), empty: byId('chat-empty') },
+    {
+      chat: byId('chat'),
+      empty: byId('chat-empty'),
+      status: byId('chat-status'),
+      live: byId('live'),
+    },
     {
       onNew: () => {
         void store.selectConversation(null);
@@ -150,7 +166,9 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
     document.body.dataset.create = state.create.open ? 'true' : 'false';
     document.body.dataset.compactList = state.compactList ? 'true' : 'false';
     banner.render(state.banner);
-    header.render(state);
+    tabs.render(state);
+    sandboxList.render(state);
+    conversationsHeader.render(state);
     list.render(state);
     conversation.render(state);
     composer.render(state);
@@ -159,7 +177,7 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
   store.subscribe(render);
 
   buttonSlot(byId('compact-back'), {
-    label: '← Conversations',
+    label: '← Back',
     size: 'sm',
     variant: 'ghost',
     onClick: store.showConversationList,

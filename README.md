@@ -26,12 +26,16 @@ add `https://github.com/fahimalizain/boat-openchamber` in **Settings → Extensi
 left, a badge while an agent works, and Stop, Extend 1h, Desktop or Resume on the
 row. Scoped to the open project, with a muted note for the sandboxes in others.
 
-**Rail panel** — pick a sandbox, read its conversations as a chat, and drive the
-agent: a new conversation with an agent and model from boat's own catalogue (and
-a reasoning level where the model has one), a reply in an idle one, or a steer
-and an interrupt while a turn runs. Replies continue the conversation's own
-harness and model. New events arrive live; a running turn also polls as a
-fallback. Every action ends in a toast, and failures show a banner.
+**Rail panel** — two tabs. **Sandboxes** lists the project's sandboxes and the
+others, one row each with state, size, environment and auto-stop time; Stop or
+Resume is on the row, with Extend, Desktop and Copy in its menu, and clicking the
+row opens its conversations. **Conversations** has a compact sandbox switcher, a
+Resume banner when the sandbox is stopped, and the chat itself: a new
+conversation with an agent and model from boat's own catalogue (and a reasoning
+level where the model has one), a reply in an idle one, or a steer and an
+interrupt while a turn runs. Replies continue the conversation's own harness and
+model. New events arrive live; a running turn also polls as a fallback. Every
+action ends in a toast, and failures show a banner.
 
 **New sandboxes** — the panel's **New sandbox** button opens a form with two
 independent choices: **Start from** a clean machine, a saved snapshot, or a copy

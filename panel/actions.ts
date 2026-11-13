@@ -5,19 +5,22 @@ import type { ServiceClient } from './api.ts';
 import type { Loaders } from './data.ts';
 import type { Preferences, PreferenceStore } from './preferences.ts';
 import type { Cell, Reporter } from './state.ts';
+import { defaultTab, type PanelTab } from './tab.ts';
 
 export type Actions = {
   boot: () => Promise<void>;
   setDirectory: (directory: string | null) => void;
   selectSandbox: (sandboxId: string) => Promise<void>;
+  openSandbox: (sandboxId: string) => Promise<void>;
   selectConversation: (conversationId: string | null) => Promise<void>;
+  setTab: (tab: PanelTab) => void;
   setDraft: (text: string) => void;
   setProvider: (provider: string) => void;
   setModel: (model: string) => void;
   setReasoning: (reasoning: string) => void;
   submit: () => Promise<void>;
   interrupt: () => Promise<void>;
-  runSandboxAction: (action: SandboxAction) => Promise<void>;
+  runSandboxAction: (action: SandboxAction, sandboxId?: string) => Promise<void>;
   showConversationList: () => void;
   persistPreferences: () => void;
   refreshAgents: () => void;
@@ -50,6 +53,7 @@ export const createActions = (deps: {
       provider: state.provider,
       model: state.model,
       reasoning: state.reasoning,
+      tab: state.tab,
     };
     void preferences.save(state.directory, current).catch(() => {});
   };
@@ -92,7 +96,7 @@ export const createActions = (deps: {
     }
   };
 
-  const applyStoredPreferences = async (directory: string | null): Promise<string | null> => {
+  const applyStoredPreferences = async (directory: string | null): Promise<{ sandboxId: string | null; tab: PanelTab | null }> => {
     const stored = await preferences.get(directory);
     const state = cell.get();
     if (stored?.provider) state.provider = stored.provider;
@@ -101,7 +105,22 @@ export const createActions = (deps: {
     if (stored?.reasoning) state.reasoning = stored.reasoning;
     ensureProvider();
     cell.notify();
-    return stored?.sandboxId ?? null;
+    return { sandboxId: stored?.sandboxId ?? null, tab: stored?.tab ?? null };
+  };
+
+  /** Load a directory's sandboxes and settle on a tab. */
+  const loadForDirectory = async (directory: string | null): Promise<void> => {
+    const stored = await applyStoredPreferences(directory);
+    if (stored.tab) cell.get().tab = stored.tab;
+    await loaders.sandboxes(stored.sandboxId);
+    if (!stored.tab) {
+      cell.get().tab = defaultTab({
+        stored: null,
+        sandboxId: cell.get().sandboxId,
+        conversations: cell.get().conversations.length,
+      });
+    }
+    cell.notify();
   };
 
   const refreshAfterAction = async (): Promise<void> => {
@@ -113,8 +132,7 @@ export const createActions = (deps: {
   const boot = async (): Promise<void> => {
     try {
       await loadAgents();
-      const preferred = await applyStoredPreferences(cell.get().directory);
-      await loaders.sandboxes(preferred);
+      await loadForDirectory(cell.get().directory);
       cell.patch({ loading: false, banner: null });
     } catch (failure) {
       cell.patch({ loading: false });
@@ -125,7 +143,11 @@ export const createActions = (deps: {
   const selectSandbox = async (sandboxId: string): Promise<void> => {
     const state = cell.get();
     if (sandboxId === state.sandboxId) return;
+    await activateSandbox(sandboxId);
+  };
 
+  const activateSandbox = async (sandboxId: string): Promise<void> => {
+    const state = cell.get();
     const previousSandbox = state.sandboxId;
     const previousConversation = state.conversationId;
     if (previousSandbox && previousConversation) {
@@ -140,6 +162,7 @@ export const createActions = (deps: {
       running: false,
       live: false,
       watchBroken: false,
+      pendingConversationAt: null,
     });
 
     try {
@@ -147,6 +170,12 @@ export const createActions = (deps: {
     } catch (failure) {
       reporter.fail('Could not list conversations', failure);
     }
+    savePreferences();
+  };
+
+  const openSandbox = async (sandboxId: string): Promise<void> => {
+    await activateSandbox(sandboxId);
+    cell.patch({ tab: 'conversations' });
     savePreferences();
   };
 
@@ -222,12 +251,13 @@ export const createActions = (deps: {
     }
   };
 
-  const runSandboxAction = async (action: SandboxAction): Promise<void> => {
+  const runSandboxAction = async (action: SandboxAction, sandboxId?: string): Promise<void> => {
     const state = cell.get();
-    if (!state.sandboxId || state.busy) return;
+    const target = sandboxId ?? state.sandboxId;
+    if (!target || state.busy) return;
     cell.patch({ busy: true });
     try {
-      const answer = await client.action({ sandbox: state.sandboxId, action });
+      const answer = await client.action({ sandbox: target, action });
       if (action === 'desktop') {
         if (!answer.url) throw new Error('This sandbox has no desktop to open.');
         await openUrl(answer.url);
@@ -251,13 +281,16 @@ export const createActions = (deps: {
       if (directory === state.directory) return;
       state.directory = directory;
       cell.notify();
-      void (async () => {
-        const preferred = await applyStoredPreferences(directory);
-        await loaders.sandboxes(preferred);
-      })().catch((failure) => reporter.fail('Could not reload sandboxes', failure));
+      void loadForDirectory(directory)
+        .catch((failure) => reporter.fail('Could not reload sandboxes', failure));
     },
     selectSandbox,
+    openSandbox,
     selectConversation: loaders.openConversation,
+    setTab: (tab) => {
+      cell.patch({ tab });
+      savePreferences();
+    },
     setDraft: (text) => {
       cell.get().draft = text;
     },

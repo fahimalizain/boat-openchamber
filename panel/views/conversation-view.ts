@@ -51,7 +51,7 @@ const emptyState = (state: PanelState): { title: string; body: string } => {
 };
 
 export const createConversationView = (
-  roots: { chat: HTMLElement; empty: HTMLElement },
+  roots: { chat: HTMLElement; empty: HTMLElement; status: HTMLElement; live: HTMLElement },
   handlers: { onNew: () => void },
 ): ConversationView => {
   const empty = mountEmpty(roots.empty, {
@@ -66,6 +66,9 @@ export const createConversationView = (
     const open = Boolean(state.conversationId);
     roots.empty.hidden = open;
     roots.chat.hidden = !open;
+    roots.status.hidden = !open;
+    roots.live.textContent = state.live ? 'live' : state.running ? 'polling' : 'paused';
+    roots.live.className = `live${state.live ? ' on' : ''}`;
 
     if (!open) {
       const next = emptyState(state);

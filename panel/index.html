@@ -18,17 +18,15 @@
     overflow: hidden;
   }
   #root { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-  .head {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 12px 4px;
-  }
-  .title { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--oc-muted, inherit); }
   .live {
     font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
     padding: 1px 7px; border-radius: 999px;
     border: 1px solid currentColor; color: var(--oc-muted, inherit);
   }
   .live.on { color: var(--oc-success, #16a34a); }
+  .tabs { padding: 8px 12px 4px; }
+  .tab-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  #sandboxes-tab { overflow-y: auto; }
   .banner { padding: 0 12px 6px; }
   .block { padding: 4px 12px 8px; }
   .meta {
@@ -37,7 +35,6 @@
   }
   .row, .slot-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .row { margin-top: 8px; }
-  .groups { margin-bottom: 6px; }
   .create {
     display: none;
     flex: 1 1 auto;
@@ -59,7 +56,47 @@
     font-size: 11px; font-weight: 600; letter-spacing: .06em;
     text-transform: uppercase; color: var(--oc-muted, inherit);
   }
+
+  /* Sandboxes tab */
+  .sandbox-list { display: flex; flex-direction: column; gap: 8px; padding: 4px 12px 12px; }
+  .sandbox-list-head { display: flex; }
+  .sandbox-groups { display: flex; flex-direction: column; gap: 6px; }
+  .sandbox-group-title {
+    margin-top: 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--oc-muted, inherit);
+  }
+  .sandbox-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px; border: 1px solid var(--oc-border, rgba(127, 127, 127, .25));
+    border-radius: 8px; cursor: pointer;
+  }
+  .sandbox-row:hover { background: var(--oc-hover, transparent); }
+  .sandbox-row.selected { background: var(--oc-subtle, rgba(127, 127, 127, .08)); border-color: var(--oc-primary, currentColor); }
+  .sandbox-row-main { flex: 1 1 auto; min-width: 0; }
+  .sandbox-row-head { display: flex; align-items: center; gap: 6px; }
+  .sandbox-row-name {
+    font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sandbox-row-meta {
+    margin-top: 2px; font-size: 11px; color: var(--oc-muted, inherit);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sandbox-row-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+  .sandbox-badge {
+    font-size: 10px; padding: 0 6px; border-radius: 999px;
+    border: 1px solid var(--oc-primary, currentColor); color: var(--oc-primary-text, inherit);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--oc-muted, currentColor); flex: 0 0 auto; }
+  .dot-success { background: var(--oc-success, #16a34a); }
+  .dot-warning { background: var(--oc-warning, #d97706); }
+  .dot-error { background: var(--oc-error, #dc2626); }
+  .dot-muted { background: var(--oc-muted, currentColor); }
+
+  /* Conversations tab */
+  .conversations-header { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 8px; }
+  .conversations-head { justify-content: flex-end; }
   .conv-list { max-height: 190px; overflow-y: auto; }
+  .chat-status { display: flex; justify-content: flex-end; padding: 0 12px 4px; }
   .chat-wrap { flex: 1 1 auto; min-height: 90px; display: flex; flex-direction: column; }
   #chat-empty { padding: 4px 12px 12px; }
   .chat {
@@ -118,12 +155,14 @@
 
   /* Phone: one column, touch targets, the list and the chat swapped. */
   html[data-layout="compact"] body { font-size: 14px; }
-  html[data-layout="compact"] .head {
-    padding: calc(10px + var(--safe-top, 0px)) calc(12px + var(--safe-right, 0px)) 4px calc(12px + var(--safe-left, 0px));
+  html[data-layout="compact"] .tabs {
+    padding: calc(8px + var(--safe-top, 0px)) calc(12px + var(--safe-right, 0px)) 4px calc(12px + var(--safe-left, 0px));
   }
   html[data-layout="compact"] .block,
   html[data-layout="compact"] .banner,
-  html[data-layout="compact"] .compact-nav {
+  html[data-layout="compact"] .compact-nav,
+  html[data-layout="compact"] .sandbox-list,
+  html[data-layout="compact"] .conversations-header {
     padding-left: calc(12px + var(--safe-left, 0px));
     padding-right: calc(12px + var(--safe-right, 0px));
   }
@@ -152,11 +191,8 @@
 
   /* The create form takes the whole panel. Last, so it beats the compact rules. */
   body[data-create="true"] #root .create { display: flex; }
-  body[data-create="true"] #root .head,
-  body[data-create="true"] #root .block,
-  body[data-create="true"] #root .chat-wrap,
-  body[data-create="true"] #root .composer,
-  body[data-create="true"] #root .compact-nav { display: none; }
+  body[data-create="true"] #root #tabs,
+  body[data-create="true"] #root .tab-panel { display: none; }
 
   /* A narrow panel stacks the agent row even without the phone layout. */
   @media (max-width: 380px) {
@@ -166,11 +202,45 @@
 </head>
 <body>
 <div id="root">
-  <header class="head">
-    <span class="title">Boat</span>
-    <span id="live" class="live" hidden></span>
-  </header>
   <div id="banner" class="banner" hidden><div id="banner-inner"></div></div>
+  <div id="tabs" class="tabs"></div>
+
+  <section id="sandboxes-tab" class="tab-panel">
+    <div id="sandbox-list" class="sandbox-list"></div>
+  </section>
+
+  <section id="conversations-tab" class="tab-panel">
+    <div class="conversations-header">
+      <div id="conv-sandbox-select"></div>
+      <div id="conv-sandbox-state" class="meta"></div>
+      <div id="conv-resume"></div>
+    </div>
+    <section class="block conversations">
+      <div class="section-head conversations-head">
+        <div id="new-conversation" class="slot-row"></div>
+      </div>
+      <div class="conv-list"><div id="conversation-list"></div></div>
+    </section>
+    <div id="compact-nav" class="compact-nav"><div id="compact-back"></div></div>
+    <section class="chat-wrap">
+      <div id="chat-status" class="chat-status"><span id="live" class="live" hidden></span></div>
+      <div id="chat-empty"></div>
+      <div id="chat" class="chat" role="log" aria-live="polite"></div>
+    </section>
+    <section class="composer">
+      <div id="composer-hint" class="hint"></div>
+      <div id="provider-row" class="provider-row">
+        <div id="provider-select"></div>
+        <div id="model-select"></div>
+        <div id="reasoning-select"></div>
+      </div>
+      <div id="composer-field"></div>
+      <div class="row">
+        <div id="composer-actions" class="slot-row composer-actions"></div>
+      </div>
+    </section>
+  </section>
+
   <section id="create" class="create">
     <div class="section-head">
       <span class="section-title">New sandbox</span>
@@ -189,36 +259,6 @@
     <div id="create-blocked" class="hint" hidden></div>
     <div class="row"><div id="create-submit" class="slot-row"></div></div>
     <div class="hint">Billed per second while running.</div>
-  </section>
-  <section class="block">
-    <div id="sandbox-groups" class="groups" hidden></div>
-    <div id="sandbox-select"></div>
-    <div id="sandbox-meta" class="meta"></div>
-    <div id="sandbox-actions" class="row"></div>
-  </section>
-  <section class="block conversations">
-    <div class="section-head">
-      <span class="section-title">Conversations</span>
-      <div id="new-conversation" class="slot-row"></div>
-    </div>
-    <div class="conv-list"><div id="conversation-list"></div></div>
-  </section>
-  <div id="compact-nav" class="compact-nav"><div id="compact-back"></div></div>
-  <section class="chat-wrap">
-    <div id="chat-empty"></div>
-    <div id="chat" class="chat" role="log" aria-live="polite"></div>
-  </section>
-  <section class="composer">
-    <div id="composer-hint" class="hint"></div>
-    <div id="provider-row" class="provider-row">
-      <div id="provider-select"></div>
-      <div id="model-select"></div>
-      <div id="reasoning-select"></div>
-    </div>
-    <div id="composer-field"></div>
-    <div class="row">
-      <div id="composer-actions" class="slot-row composer-actions"></div>
-    </div>
   </section>
 </div>
 <script src="./main.js"></script>

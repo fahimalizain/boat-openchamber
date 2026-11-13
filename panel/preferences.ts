@@ -1,16 +1,18 @@
 /**
- * The last sandbox, provider and model per project, kept in device storage when
- * the host allows it and in memory otherwise.
+ * The last sandbox, agent, model, reasoning and tab per project, kept in device
+ * storage when the host allows it and in memory otherwise.
  */
 import type { GuestStorageOptions, JsonValue } from '@openchamber/sdk';
 
 import { isRecord, readString } from '../shared/json.ts';
+import { isPanelTab, type PanelTab } from './tab.ts';
 
 export type Preferences = {
   sandboxId: string | null;
   provider: string | null;
   model: string | null;
   reasoning: string | null;
+  tab: PanelTab | null;
 };
 
 export type PreferencesStorage = {
@@ -44,11 +46,13 @@ export const preferenceKey = (directory: string | null): string => (
 
 export const readPreferences = (value: unknown): Preferences | null => {
   if (!isRecord(value)) return null;
+  const tab = readString(value.tab);
   return {
     sandboxId: readString(value.sandboxId),
     provider: readString(value.provider),
     model: readString(value.model),
     reasoning: readString(value.reasoning),
+    tab: tab && isPanelTab(tab) ? tab : null,
   };
 };
 
@@ -57,6 +61,7 @@ const serialize = (preferences: Preferences): JsonValue => ({
   provider: preferences.provider,
   model: preferences.model,
   reasoning: preferences.reasoning,
+  tab: preferences.tab,
 });
 
 export const createPreferences = (options: {

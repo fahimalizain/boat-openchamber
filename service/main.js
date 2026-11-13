@@ -2940,7 +2940,8 @@ var sandboxRoutes = (deps) => [
       sandboxes: ordered.map((entry) => ({
         ...summaryOf(entry.sandbox),
         matchedBy: entry.matchedBy,
-        inProject: entry.inProject
+        inProject: entry.inProject,
+        agentRunning: deps.agents.has(entry.sandbox.id)
       })),
       error: snapshot.failure?.text ?? null,
       now: Date.now(),
