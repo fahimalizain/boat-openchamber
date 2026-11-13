@@ -28,8 +28,10 @@ row. Scoped to the open project, with a muted note for the sandboxes in others.
 
 **Rail panel** — two tabs. **Sandboxes** lists the project's sandboxes and the
 others, one row each with state, size, environment and auto-stop time; Stop or
-Resume is on the row, with Extend, Desktop and Copy in its menu, and clicking the
-row opens its conversations. **Conversations** has a compact sandbox switcher, a
+Resume is on the row, with Extend, Desktop, OpenCode and Copy in its menu, and
+clicking the row opens its conversations. **OpenCode** starts OpenCode's server in
+the sandbox if it is not running, hosts it on a private boat URL and opens its web
+UI already signed in; each click mints a fresh one-time link. **Conversations** has a compact sandbox switcher, a
 Resume banner when the sandbox is stopped, and the chat itself: a new
 conversation with an agent and model from boat's own catalogue (and a reasoning
 level where the model has one), a reply in an idle one, or a steer and an

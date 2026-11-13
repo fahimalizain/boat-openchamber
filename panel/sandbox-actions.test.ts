@@ -3,14 +3,14 @@ import { test } from 'node:test';
 
 import { rowActionsFor } from './sandbox-actions.ts';
 
-test('a running sandbox offers Stop, Extend, Desktop and Copy', () => {
+test('a running sandbox offers Stop, Extend, Desktop, OpenCode and Copy', () => {
   assert.deepEqual(rowActionsFor('idle', true), {
     primary: 'stop',
-    menu: ['extend', 'desktop', 'copy'],
+    menu: ['extend', 'desktop', 'opencode', 'copy'],
   });
   assert.deepEqual(rowActionsFor('running', false), {
     primary: 'stop',
-    menu: ['extend', 'copy'],
+    menu: ['extend', 'opencode', 'copy'],
   });
 });
 

@@ -9,14 +9,17 @@ import {
 import type { ScopedSandboxSummary } from '../../shared/routes.ts';
 import { remaining } from '../../shared/time.ts';
 import { isBootingState, isStoppedState, isUpState } from '../../shared/types.ts';
-import { rowActionsFor, type SandboxRowAction } from '../sandbox-actions.ts';
+import { rowActionsFor, type SandboxMenuAction, type SandboxRowAction } from '../sandbox-actions.ts';
 import { el } from '../kit.ts';
 
-const MENU_LABELS: Record<'extend' | 'desktop' | 'copy', string> = {
+const MENU_LABELS: Record<SandboxMenuAction, string> = {
   extend: 'Extend 1h',
   desktop: 'Desktop',
+  opencode: 'OpenCode',
   copy: 'Copy',
 };
+
+const isMenuAction = (id: string): id is SandboxMenuAction => Object.hasOwn(MENU_LABELS, id);
 
 export type SandboxRowView = {
   element: HTMLElement;
@@ -112,7 +115,7 @@ export const createSandboxRow = (
       variant: 'ghost',
       items: actions.menu.map((action) => ({ id: action, label: MENU_LABELS[action] })),
       onSelect: (id) => {
-        if (id === 'extend' || id === 'desktop' || id === 'copy') options.onAction(id);
+        if (isMenuAction(id)) options.onAction(id);
       },
     });
   }

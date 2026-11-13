@@ -2913,6 +2913,65 @@ var projectRoutes = (deps) => [
   })
 ];
 
+// service/domain/opencode.ts
+var MISSING = "opencode-missing";
+var START_SCRIPT = [
+  `command -v opencode >/dev/null 2>&1 || { echo ${MISSING}; exit 0; }`,
+  "opencode service start >/dev/null 2>&1",
+  "opencode service status 2>&1"
+].join(`
+`);
+var shellQuote = (value) => `'${value.replaceAll("'", `'\\''`)}'`;
+var execScript = async (sandboxId, script) => {
+  const data = await runBoat("exec", [sandboxId, "--timeout", "60", "--", script], { timeoutMs: 70000 });
+  return isRecord(data) ? readString(data.stdout) ?? "" : "";
+};
+var readServicePort = (output) => {
+  const match = /https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0):(\d+)/.exec(output);
+  const port = match ? Number(match[1]) : Number.NaN;
+  return Number.isInteger(port) && port > 0 && port < 65536 ? port : null;
+};
+var readHostedUrl = (value) => {
+  const url = isRecord(value) ? readString(value.url) : null;
+  if (!url)
+    return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:")
+      return null;
+    return { origin: parsed.origin, token: parsed.searchParams.get("_token") };
+  } catch {
+    return null;
+  }
+};
+var readPairLink = (output, origin) => {
+  for (const match of output.matchAll(/https?:\/\/\S+\/auth\/connect\/[\w-]+/g)) {
+    if (match[0].startsWith(`${origin}/`))
+      return match[0];
+  }
+  return null;
+};
+var openOpencodeUrl = async (sandboxId) => {
+  const status = await execScript(sandboxId, START_SCRIPT);
+  if (status.includes(MISSING))
+    throw new Error("OpenCode is not installed in this sandbox.");
+  const port = readServicePort(status);
+  if (!port)
+    throw new Error("OpenCode did not start in this sandbox.");
+  const hosted = readHostedUrl(await runBoat("host", [sandboxId, String(port), "--localhost", "--title", "OpenCode"], { timeoutMs: 20000 }));
+  if (!hosted)
+    throw new Error("boat host returned no URL for OpenCode.");
+  const pairing = await execScript(sandboxId, `opencode pair --url ${shellQuote(hosted.origin)} 2>&1`);
+  const link = readPairLink(pairing, hosted.origin);
+  if (!link)
+    throw new Error("OpenCode did not print a sign-in link.");
+  if (!hosted.token)
+    return link;
+  const url = new URL(link);
+  url.searchParams.set("_token", hosted.token);
+  return url.toString();
+};
+
 // service/routes/sandboxes.ts
 var summaryOf = (sandbox) => ({
   id: sandbox.id,
@@ -2965,6 +3024,14 @@ var sandboxRoutes = (deps) => [
         if (!url)
           return context.reply(502, errorBody("This sandbox has no desktop to open."));
         const answer = { ok: true, url };
+        return context.reply(200, answer);
+      } catch (failure) {
+        return context.reply(502, errorBody(describeFailure(failure).text));
+      }
+    }
+    if (action === "opencode") {
+      try {
+        const answer = { ok: true, url: await openOpencodeUrl(sandboxId) };
         return context.reply(200, answer);
       } catch (failure) {
         return context.reply(502, errorBody(describeFailure(failure).text));

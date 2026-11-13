@@ -6,6 +6,7 @@ import {
 } from '../../shared/routes.ts';
 import type { Sandbox, SandboxAction, SandboxSummary } from '../../shared/types.ts';
 import type { ServiceContext } from '../context.ts';
+import { openOpencodeUrl } from '../domain/opencode.ts';
 import { describeFailure } from '../failures.ts';
 import { route, type Route } from '../router.ts';
 import { isSandboxId } from '../validation.ts';
@@ -69,6 +70,15 @@ export const sandboxRoutes = (deps: Deps): Route[] => [
         const url = await deps.desktop.get(sandboxId);
         if (!url) return context.reply(502, errorBody('This sandbox has no desktop to open.'));
         const answer: ActionResponse = { ok: true, url };
+        return context.reply(200, answer);
+      } catch (failure) {
+        return context.reply(502, errorBody(describeFailure(failure).text));
+      }
+    }
+
+    if (action === 'opencode') {
+      try {
+        const answer: ActionResponse = { ok: true, url: await openOpencodeUrl(sandboxId) };
         return context.reply(200, answer);
       } catch (failure) {
         return context.reply(502, errorBody(describeFailure(failure).text));

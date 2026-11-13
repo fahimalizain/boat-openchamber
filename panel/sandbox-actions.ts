@@ -1,13 +1,15 @@
 /** Which actions a sandbox row shows, from its state alone. */
 import { isBootingState, isStoppedState, isUpState } from '../shared/types.ts';
 
-export type SandboxRowAction = 'stop' | 'resume' | 'extend' | 'desktop' | 'copy';
+export type SandboxRowAction = 'stop' | 'resume' | 'extend' | 'desktop' | 'opencode' | 'copy';
+
+export type SandboxMenuAction = 'extend' | 'desktop' | 'opencode' | 'copy';
 
 export type SandboxRowActions = {
   /** The one state-changing button on the row. */
   primary: 'stop' | 'resume' | null;
   /** The overflow menu: secondary commands only. */
-  menu: Array<'extend' | 'desktop' | 'copy'>;
+  menu: SandboxMenuAction[];
 };
 
 export const rowActionsFor = (state: string, desktopAvailable: boolean): SandboxRowActions => {
@@ -16,7 +18,7 @@ export const rowActionsFor = (state: string, desktopAvailable: boolean): Sandbox
   if (isUpState(state)) {
     return {
       primary: 'stop',
-      menu: ['extend', ...(desktopAvailable ? ['desktop' as const] : []), 'copy'],
+      menu: ['extend', ...(desktopAvailable ? ['desktop' as const] : []), 'opencode', 'copy'],
     };
   }
 

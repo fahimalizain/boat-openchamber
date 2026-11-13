@@ -66,7 +66,7 @@ export type UiEvent = {
 export type ProjectMatch = 'label' | 'repo' | 'name';
 
 /** Every action the panel and the sandbox row can ask for. */
-export type SandboxAction = 'stop' | 'resume' | 'extend' | 'desktop';
+export type SandboxAction = 'stop' | 'resume' | 'extend' | 'desktop' | 'opencode';
 
 /** The actions the status section offers, which are the ones a CLI command names. */
 export type SandboxActionVerb = 'stop' | 'resume' | 'extend';

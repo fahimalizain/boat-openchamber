@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **OpenCode** in a running sandbox's row menu opens the sandbox's own OpenCode
+  web UI in a browser tab. It starts OpenCode's background service when needed,
+  hosts its port on a token-gated boat URL, and signs in with a one-time
+  `opencode pair` link, so one URL passes both boat's gate and OpenCode's
+  password.
+
 ## 0.4.0 — 2026-11-13
 
 - The panel is split into **Sandboxes** and **Conversations** tabs; the

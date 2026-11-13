@@ -31,6 +31,13 @@ const DONE_MESSAGES: Record<SandboxAction, string> = {
   resume: 'Sandbox resuming.',
   extend: 'Sandbox extended by an hour.',
   desktop: 'Opening the sandbox desktop.',
+  opencode: 'Opening OpenCode.',
+};
+
+/** Actions that answer with a URL to open rather than a changed sandbox. */
+const OPENS_URL: Partial<Record<SandboxAction, string>> = {
+  desktop: 'This sandbox has no desktop to open.',
+  opencode: 'OpenCode returned no link.',
 };
 
 export const createActions = (deps: {
@@ -256,12 +263,14 @@ export const createActions = (deps: {
     const target = sandboxId ?? state.sandboxId;
     if (!target || state.busy) return;
     cell.patch({ busy: true });
+    if (action === 'opencode') toast('info', 'Starting OpenCode in the sandbox…');
     try {
       const answer = await client.action({ sandbox: target, action });
-      if (action === 'desktop') {
-        if (!answer.url) throw new Error('This sandbox has no desktop to open.');
+      const missingUrl = OPENS_URL[action];
+      if (missingUrl) {
+        if (!answer.url) throw new Error(missingUrl);
         await openUrl(answer.url);
-        toast('success', DONE_MESSAGES.desktop);
+        toast('success', DONE_MESSAGES[action]);
       } else {
         toast('success', DONE_MESSAGES[action]);
         reporter.setBanner(null);
