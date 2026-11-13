@@ -4,14 +4,9 @@ import readline from 'node:readline';
 import { isRecord, readString } from '../../shared/json.ts';
 import type { PromptStart } from '../../shared/routes.ts';
 import { BoatError, parseBoatJson, runBoat, spawnBoat } from '../boat.ts';
+import { promptCommand, type PromptOptions } from './prompt-argv.ts';
 
-export type PromptOptions = {
-  provider?: string;
-  model?: string;
-  /** Continue this conversation instead of starting one. */
-  conversation?: string;
-  newConversation?: boolean;
-};
+export type { PromptOptions };
 
 const MUTATION_TIMEOUT_MS = 20_000;
 const EARLY_RETURN_MS = 2_500;
@@ -23,12 +18,7 @@ const EARLY_RETURN_MS = 2_500;
  */
 export const promptSandbox = (sandboxId: string, text: string, options: PromptOptions): Promise<PromptStart> => (
   new Promise((resolve, reject) => {
-    const args = [sandboxId];
-    if (options.newConversation) args.push('--new');
-    if (options.conversation) args.push('--resume', options.conversation);
-    if (options.provider) args.push('--provider', options.provider);
-    if (options.model) args.push('--model', options.model);
-    args.push('--', text);
+    const args = promptCommand(sandboxId, text, options);
 
     const child = spawnBoat('prompt', args);
     const stdout = child.stdout;

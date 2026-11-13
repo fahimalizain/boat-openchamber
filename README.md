@@ -27,10 +27,11 @@ left, a badge while an agent works, and Stop, Extend 1h, Desktop or Resume on th
 row. Scoped to the open project, with a muted note for the sandboxes in others.
 
 **Rail panel** — pick a sandbox, read its conversations as a chat, and drive the
-agent: a new conversation with a provider and optional model, a reply in an idle
-one, or a steer and an interrupt while a turn runs. New events arrive live; a
-running turn also polls as a fallback. Every action ends in a toast, and failures
-show a banner.
+agent: a new conversation with an agent and model from boat's own catalogue (and
+a reasoning level where the model has one), a reply in an idle one, or a steer
+and an interrupt while a turn runs. Replies continue the conversation's own
+harness and model. New events arrive live; a running turn also polls as a
+fallback. Every action ends in a toast, and failures show a banner.
 
 **New sandboxes** — the panel's **New sandbox** button opens a form with two
 independent choices: **Start from** a clean machine, a saved snapshot, or a copy
@@ -83,10 +84,13 @@ from the panel and from the open Work Status directory, then kept in
 ## Privacy
 
 - Everything runs on this machine. The extension talks to boat.dev only through
-  the boat CLI, with the login you already have; there is no other network call.
+  the boat CLI, with the login you already have, plus the public agent/model
+  catalogue at `boat.dev/api/provider-models`; there is no other network call.
 - `boat env list` is read for environment names and repository full names only.
   Secret files, variables and setup scripts are dropped at the adapter boundary
   and never logged, cached, returned or emitted.
+- `boat ai profiles` is read for the default profile's `connected` credential
+  names only; keys, accounts and every other field are dropped.
 
 ## Development
 

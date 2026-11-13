@@ -1,5 +1,6 @@
 /** Reads that fill the state: sandboxes, conversations and one conversation's events. */
 import type { ServiceClient } from './api.ts';
+import { settleConversation } from './selection.ts';
 import { resetConversation, type Cell, type Reporter } from './state.ts';
 import { messageOf } from './state.ts';
 
@@ -45,6 +46,9 @@ export const createLoaders = (deps: {
       live: false,
       watchBroken: false,
       compactList: false,
+      pendingConversationAt: conversationId && !state.conversations.some((entry) => entry.id === conversationId)
+        ? Date.now()
+        : null,
     });
     if (!conversationId || !state.sandboxId) return;
 
@@ -77,7 +81,22 @@ export const createLoaders = (deps: {
     if (cell.get().sandboxId !== sandboxId) return;
 
     state.conversations = data.conversations;
-    const selected = data.conversations.find((entry) => entry.id === state.conversationId);
+    const settled = settleConversation(
+      { conversationId: state.conversationId, pendingSince: state.pendingConversationAt },
+      data.conversations.map((entry) => entry.id),
+    );
+    const dropped = settled.conversationId !== state.conversationId;
+    state.conversationId = settled.conversationId;
+    state.pendingConversationAt = settled.pendingSince;
+    if (dropped) {
+      state.events = new Map();
+      state.live = false;
+      state.watchBroken = false;
+    }
+
+    const selected = settled.conversationId
+      ? data.conversations.find((entry) => entry.id === settled.conversationId) ?? null
+      : null;
     state.running = selected?.running ?? false;
 
     if (!selected && settings.autoSelect !== false) {

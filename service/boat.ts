@@ -51,9 +51,35 @@ export const parseBoatJson = (output: string): unknown => {
   return items.length > 0 ? items : null;
 };
 
+export type BoatLine = {
+  /** The line's own fields, with the envelope's event name folded in. */
+  value: Record<string, unknown>;
+  event: string | null;
+  /** The envelope's `final` flag, when the command prints one. */
+  final: boolean | null;
+};
+
+/**
+ * Several commands wrap each JSONL line as `{ event, data }` (conversations,
+ * events, prompt, new). Unwrap once here; flat lines pass through unchanged.
+ * An event's own `data` field does not make it an envelope: the wrapper always
+ * carries an `event` name.
+ */
+export const readBoatLine = (raw: unknown): BoatLine | null => {
+  if (!isRecord(raw)) return null;
+  const event = readString(raw.event);
+  const final = typeof raw.final === 'boolean' ? raw.final : null;
+  const data = isRecord(raw.data) ? raw.data : null;
+  if (event && data) {
+    return { value: { ...data, event }, event, final };
+  }
+  return { value: raw, event, final };
+};
+
 const errorMessage = (stdout: string, stderr: string, fallback: string): string => {
   const parsed = parseBoatJson(stdout) ?? parseBoatJson(stderr);
-  const record = isRecord(parsed) ? parsed : Array.isArray(parsed) && isRecord(parsed[0]) ? parsed[0] : null;
+  const first = Array.isArray(parsed) ? parsed[0] : parsed;
+  const record = readBoatLine(first)?.value ?? null;
   if (record) {
     const nested = isRecord(record.error) ? record.error : null;
     const message = readString(nested?.message) ?? readString(record.message) ?? readString(record.error);

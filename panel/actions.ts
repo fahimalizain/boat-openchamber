@@ -1,6 +1,6 @@
 /** What the panel asks for: prompts, steers, interrupts, sandbox commands. */
-import { isAgentProvider } from '../shared/agent.ts';
 import type { SandboxAction } from '../shared/types.ts';
+import { defaultProvider, modelsOf } from './agents.ts';
 import type { ServiceClient } from './api.ts';
 import type { Loaders } from './data.ts';
 import type { Preferences, PreferenceStore } from './preferences.ts';
@@ -14,11 +14,13 @@ export type Actions = {
   setDraft: (text: string) => void;
   setProvider: (provider: string) => void;
   setModel: (model: string) => void;
+  setReasoning: (reasoning: string) => void;
   submit: () => Promise<void>;
   interrupt: () => Promise<void>;
   runSandboxAction: (action: SandboxAction) => Promise<void>;
   showConversationList: () => void;
   persistPreferences: () => void;
+  refreshAgents: () => void;
 };
 
 const DONE_MESSAGES: Record<SandboxAction, string> = {
@@ -47,6 +49,7 @@ export const createActions = (deps: {
       sandboxId: state.sandboxId,
       provider: state.provider,
       model: state.model,
+      reasoning: state.reasoning,
     };
     void preferences.save(state.directory, current).catch(() => {});
   };
@@ -59,10 +62,44 @@ export const createActions = (deps: {
     }, 500);
   };
 
+  /** Drop a stored agent or model the catalogue no longer offers. */
+  const ensureProvider = (): void => {
+    const state = cell.get();
+    if (state.agents.length === 0) return;
+    if (!state.agents.some((agent) => agent.provider === state.provider)) {
+      state.provider = defaultProvider(state.agents) ?? 'claude';
+      state.model = '';
+      state.reasoning = '';
+      return;
+    }
+    if (state.model && !modelsOf(state.agents, state.provider).some((model) => model.id === state.model)) {
+      state.model = '';
+      state.reasoning = '';
+    }
+    if (state.model) {
+      const reasoning = modelsOf(state.agents, state.provider).find((model) => model.id === state.model)?.reasoning;
+      if (state.reasoning && !(reasoning?.supported.includes(state.reasoning) ?? false)) state.reasoning = '';
+    }
+  };
+
+  const loadAgents = async (): Promise<void> => {
+    try {
+      cell.get().agents = await client.agents();
+      ensureProvider();
+      cell.notify();
+    } catch {
+      // The composer keeps its built-in fallback until the next try.
+    }
+  };
+
   const applyStoredPreferences = async (directory: string | null): Promise<string | null> => {
     const stored = await preferences.get(directory);
-    if (stored?.provider && isAgentProvider(stored.provider)) cell.get().provider = stored.provider;
-    if (stored?.model) cell.get().model = stored.model;
+    const state = cell.get();
+    if (stored?.provider) state.provider = stored.provider;
+    else if (state.agents.length > 0) state.provider = defaultProvider(state.agents) ?? state.provider;
+    if (stored?.model) state.model = stored.model;
+    if (stored?.reasoning) state.reasoning = stored.reasoning;
+    ensureProvider();
     cell.notify();
     return stored?.sandboxId ?? null;
   };
@@ -75,6 +112,7 @@ export const createActions = (deps: {
 
   const boot = async (): Promise<void> => {
     try {
+      await loadAgents();
       const preferred = await applyStoredPreferences(cell.get().directory);
       await loaders.sandboxes(preferred);
       cell.patch({ loading: false, banner: null });
@@ -131,12 +169,21 @@ export const createActions = (deps: {
         await client.steer({ sandbox: sandboxId, conversation: conversationId, text });
         toast('success', 'Message added to the running turn.');
       } else {
+        const model = state.model.trim() || undefined;
+        const reasoning = state.reasoning
+          && modelsOf(state.agents, state.provider).find((entry) => entry.id === state.model)?.reasoning?.supported.includes(state.reasoning)
+          ? state.reasoning
+          : undefined;
         const answer = await client.prompt({
           sandbox: sandboxId,
           text,
           ...(conversationId
-            ? { conversation: conversationId }
-            : { provider: state.provider, ...(state.model.trim() ? { model: state.model.trim() } : {}) }),
+            ? { conversation: conversationId, provider: state.provider, ...(model ? { model } : {}) }
+            : {
+              provider: state.provider,
+              ...(model ? { model } : {}),
+              ...(reasoning ? { reasoning } : {}),
+            }),
         });
         toast('success', conversationId ? 'Prompt sent.' : 'Conversation started.');
 
@@ -215,18 +262,33 @@ export const createActions = (deps: {
       cell.get().draft = text;
     },
     setProvider: (provider) => {
-      if (!isAgentProvider(provider)) return;
-      cell.patch({ provider });
+      const state = cell.get();
+      if (!provider) return;
+      if (state.agents.length > 0 && !state.agents.some((agent) => agent.provider === provider)) return;
+      state.provider = provider;
+      state.model = '';
+      state.reasoning = '';
+      cell.notify();
       savePreferences();
     },
     setModel: (model) => {
       cell.get().model = model;
+      cell.get().reasoning = '';
+      cell.notify();
       saveModelSoon();
+    },
+    setReasoning: (reasoning) => {
+      cell.get().reasoning = reasoning;
+      cell.notify();
+      savePreferences();
     },
     submit,
     interrupt,
     runSandboxAction,
     showConversationList: () => cell.patch({ compactList: true }),
+    refreshAgents: () => {
+      void loadAgents();
+    },
     persistPreferences: () => {
       if (modelTimer) {
         clearTimeout(modelTimer);

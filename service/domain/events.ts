@@ -4,7 +4,7 @@
  */
 import { clip, isRecord, readString } from '../../shared/json.ts';
 import type { UiEvent, UiTool } from '../../shared/types.ts';
-import { runBoat } from '../boat.ts';
+import { readBoatLine, runBoat } from '../boat.ts';
 
 const TEXT_MAX = 20_000;
 const TOOL_DETAIL_MAX = 300;
@@ -51,23 +51,26 @@ const readTools = (value: unknown): UiTool[] => {
 };
 
 export const normalizeEvent = (raw: unknown, fallbackConversation: string | null = null): UiEvent | null => {
-  if (!isRecord(raw)) return null;
-  const id = readString(raw.id) ?? readString(raw.eventId);
+  const line = readBoatLine(raw);
+  if (!line) return null;
+  const value = line.value;
+
+  const id = readString(value.id) ?? readString(value.eventId);
   if (!id) return null;
 
-  const type = readString(raw.type) ?? readString(raw.event) ?? 'event';
-  const data = isRecord(raw.data) ? raw.data : {};
+  const type = readString(value.type) ?? readString(value.event) ?? 'event';
+  const data = isRecord(value.data) ? value.data : {};
   const base = {
     id,
     type,
-    at: readTimestamp(raw.timestamp) || Date.now(),
+    at: readTimestamp(value.timestamp) || Date.now(),
     text: '',
     streaming: false,
     model: null as string | null,
     status: null as string | null,
     tools: [] as UiTool[],
     error: null as string | null,
-    conversationId: readString(raw.conversationId) ?? readString(data.conversationId) ?? fallbackConversation,
+    conversationId: readString(value.conversationId) ?? readString(data.conversationId) ?? fallbackConversation,
   };
 
   if (type === 'prompt') {
@@ -87,7 +90,7 @@ export const normalizeEvent = (raw: unknown, fallbackConversation: string | null
       ...base,
       role: 'assistant',
       text: clip(readString(data.content) ?? '', TEXT_MAX),
-      streaming: data.is_streaming === true,
+      streaming: data.is_streaming === true || line.final === false,
       model: readString(data.model),
       tools: readTools(data.tools),
       error: readString(data.error),
@@ -104,7 +107,7 @@ export const normalizeEvent = (raw: unknown, fallbackConversation: string | null
   }
 
   if (type === 'error' || type === 'sandbox.error') {
-    const message = readString(data.message) ?? readString(data.error) ?? readString(raw.error) ?? 'The agent failed.';
+    const message = readString(data.message) ?? readString(data.error) ?? readString(value.error) ?? 'The agent failed.';
     return { ...base, role: 'system', text: clip(message, TEXT_MAX), error: message };
   }
 
@@ -117,6 +120,25 @@ export const normalizeEvent = (raw: unknown, fallbackConversation: string | null
   };
 };
 
+/** Parse and upsert by id, so a streamed partial and its final collapse into one. */
+export const mergeEventRows = (rows: unknown[], conversationId: string): UiEvent[] => {
+  const byId = new Map<string, UiEvent>();
+  for (const row of rows) {
+    const event = normalizeEvent(row, conversationId);
+    if (event) byId.set(event.id, event);
+  }
+  return [...byId.values()];
+};
+
+/** One parsed JSON line is an object; several become an array. */
+export const eventRows = (data: unknown): unknown[] => {
+  if (Array.isArray(data)) return data;
+  if (isRecord(data)) {
+    return Array.isArray(data.events) ? data.events : [data];
+  }
+  return [];
+};
+
 export const listEvents = async (
   sandboxId: string,
   conversationId: string,
@@ -125,15 +147,7 @@ export const listEvents = async (
   const data = await runBoat('events', [sandboxId, '--convo', conversationId], {
     timeoutMs: options.timeoutMs ?? 30_000,
   });
-  const rows = Array.isArray(data)
-    ? data
-    : isRecord(data) && Array.isArray(data.events)
-      ? data.events
-      : [];
-  return rows.flatMap((row) => {
-    const event = normalizeEvent(row, conversationId);
-    return event ? [event] : [];
-  });
+  return mergeEventRows(eventRows(data), conversationId);
 };
 
 /** Rough serialized size, for keeping a batched emit under the host's cap. */

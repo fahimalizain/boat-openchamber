@@ -7,6 +7,7 @@ import { createServiceContext } from './context.ts';
 import { installFollowerCleanup } from './followers.ts';
 import { createRequestContext, sendReply } from './http.ts';
 import { agentRoutes } from './routes/agent.ts';
+import { agentCatalogRoutes } from './routes/agents.ts';
 import { conversationRoutes } from './routes/conversations.ts';
 import { createRoutes } from './routes/create.ts';
 import { eventRoutes } from './routes/events.ts';
@@ -43,6 +44,7 @@ const route = createRouter([
   ...eventRoutes(context),
   ...createRoutes(context),
   ...agentRoutes(context),
+  ...agentCatalogRoutes(context),
   ...mentionRoutes(context),
   ...projectRoutes({
     projects: context.projects,

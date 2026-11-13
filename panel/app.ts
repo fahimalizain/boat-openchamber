@@ -96,7 +96,8 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
       hint: byId('composer-hint'),
       providerRow: byId('provider-row'),
       provider: byId('provider-select'),
-      model: byId('model-field'),
+      model: byId('model-select'),
+      reasoning: byId('reasoning-select'),
       field: byId('composer-field'),
       actions: byId('composer-actions'),
     },
@@ -104,6 +105,7 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
       onDraft: (text) => store.setDraft(text),
       onProvider: (provider) => store.setProvider(provider),
       onModel: (model) => store.setModel(model),
+      onReasoning: (reasoning) => store.setReasoning(reasoning),
       onSubmit: () => {
         void store.submit();
       },
@@ -173,6 +175,7 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     void store.refresh();
+    store.refreshAgents();
     void syncProjects();
   });
   window.addEventListener('pagehide', () => {

@@ -2,6 +2,7 @@
 import type {
   ActionRequest,
   ActionResponse,
+  AgentDto,
   ConversationsResponse,
   CreateOptionsResponse,
   CreateSandboxRequest,
@@ -37,6 +38,7 @@ export type ServiceClient = {
   action: (request: ActionRequest) => Promise<ActionResponse>;
   createOptions: (directory: string | null) => Promise<CreateOptionsResponse>;
   create: (request: CreateSandboxRequest) => Promise<CreateSandboxResponse>;
+  agents: () => Promise<AgentDto[]>;
   rememberProjects: (directories: string[]) => Promise<OkBody>;
 };
 
@@ -93,6 +95,7 @@ export const createServiceClient = (host: HostRequester): ServiceClient => {
       directory ? `/create-options${query({ directory })}` : '/create-options',
     ),
     create: (request) => call('POST', '/create', request),
+    agents: () => call('GET', '/agents'),
     rememberProjects: (directories) => call('POST', '/projects', {
       directories,
     } satisfies ProjectsRequest),

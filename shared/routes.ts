@@ -1,5 +1,4 @@
 /** What the panel and the service say to each other, plus the row action ids. */
-import type { AgentProvider } from './agent.ts';
 import type {
   Conversation,
   ProjectMatch,
@@ -101,6 +100,27 @@ export type ProjectsRequest = {
   directories: string[];
 };
 
+export type AgentReasoning = {
+  supported: string[];
+  default: string | null;
+};
+
+export type AgentModel = {
+  id: string;
+  label: string;
+  available: boolean;
+  reasoning: AgentReasoning | null;
+  fast: boolean;
+};
+
+export type AgentDto = {
+  provider: string;
+  label: string;
+  order: number;
+  available: boolean;
+  models: AgentModel[];
+};
+
 export type WatchRequest = { sandbox: string; conversation: string };
 export type UnwatchRequest = WatchRequest;
 
@@ -109,8 +129,9 @@ export type PromptRequest = {
   text: string;
   /** Continue this conversation; omitted starts a new one. */
   conversation?: string;
-  provider?: AgentProvider;
+  provider?: string;
   model?: string;
+  reasoning?: string;
 };
 
 export type PromptResponse = OkBody & PromptStart;

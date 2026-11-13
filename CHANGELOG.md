@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.2 — 2026-11-13
+
+- Fixed the panel against the real CLI output: every JSONL reader now unwraps the
+  `{ event, data }` envelope (conversations, events, the `-f` follower and
+  create/fork progress), a single-line JSONL result is no longer dropped, and
+  streamed partial responses collapse into their final event by id.
+- Replies now continue a conversation on its own harness and model
+  (`claude-code` → `claude`, from boat's own catalogue) instead of boat's
+  dashboard default.
+- The composer's agent and model choices come from boat's `provider-models`
+  catalogue (cached, persisted, with a built-in fallback), marked by the default
+  profile's connected credentials, with a reasoning select. The free-text model
+  field is gone, and the chosen agent, model and reasoning are remembered per
+  project.
+- A conversation the list no longer has is cleared after a short grace window,
+  so the composer cannot sit in reply mode for a missing thread.
+- `[hidden]` is respected globally, so Interrupt, the provider row and the header
+  actions no longer show when they should not; the header meta line uses body
+  text and the composer hint reads “Reply”.
+
 ## 0.3.1 — 2026-11-13
 
 - Reworked the New sandbox form: **Start from** (clean machine / saved snapshot /

@@ -7,6 +7,7 @@
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { height: 100%; margin: 0; }
   body {
     background: var(--oc-bg, transparent);
@@ -32,13 +33,11 @@
   .block { padding: 4px 12px 8px; }
   .meta {
     margin-top: 4px; font-size: 11px; color: var(--oc-muted, inherit);
-    font-family: var(--oc-mono, ui-monospace, monospace);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .row, .slot-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .row { margin-top: 8px; }
   .groups { margin-bottom: 6px; }
-  .groups[hidden] { display: none; }
   .create {
     display: none;
     flex: 1 1 auto;
@@ -49,8 +48,6 @@
     overflow-y: auto;
   }
   #create-blocked { color: var(--oc-warning-text, inherit); }
-  #create-snapshot[hidden], #create-copy[hidden],
-  #create-start-hint[hidden], #create-blocked[hidden] { display: none; }
   .create-capacity { font-size: 12px; color: var(--oc-muted, inherit); }
   .compact-nav { display: none; padding: 0 12px 6px; }
   .slot { display: inline-flex; }
@@ -102,8 +99,8 @@
   .tool-detail { overflow: hidden; text-overflow: ellipsis; }
   .composer { border-top: 1px solid var(--oc-border, rgba(127, 127, 127, .25)); padding: 8px 12px 12px; }
   .hint { font-size: 11px; color: var(--oc-muted, inherit); margin-bottom: 6px; }
-  .provider-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
-  .provider-row > * { flex: 1 1 0; min-width: 0; }
+  .provider-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
+  .provider-row > #provider-select { grid-column: 1 / -1; }
   .composer-actions { margin-left: auto; }
 
   /* Phone: one column, touch targets, the list and the chat swapped. */
@@ -129,6 +126,7 @@
     display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
   }
   html[data-layout="compact"] .conv-list { max-height: none; flex: 1 1 auto; }
+  html[data-layout="compact"] .provider-row { grid-template-columns: 1fr; }
   html[data-layout="compact"] .composer,
   html[data-layout="compact"] .create {
     padding-bottom: calc(12px + var(--safe-bottom, 0px) + var(--keyboard-inset, 0px));
@@ -196,7 +194,8 @@
     <div id="composer-hint" class="hint"></div>
     <div id="provider-row" class="provider-row">
       <div id="provider-select"></div>
-      <div id="model-field"></div>
+      <div id="model-select"></div>
+      <div id="reasoning-select"></div>
     </div>
     <div id="composer-field"></div>
     <div class="row">

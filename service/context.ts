@@ -3,6 +3,8 @@ import type { GuestStatusView, ServiceMark } from '@openchamber/sdk';
 
 import type { Sandbox, SandboxActionVerb } from '../shared/types.ts';
 import { createCreateJobs, type CreateJobs } from './create/jobs.ts';
+import { createAgentCatalog, type AgentCatalogSource } from './data/agent-catalog.ts';
+import { createConnectedCredentials, type ConnectedCredentials } from './data/connected-credentials.ts';
 import { createEnvironmentList, type EnvironmentList } from './data/environment-list.ts';
 import { createConversationList, type ConversationList } from './data/conversation-list.ts';
 import { createDesktopLinks, type DesktopLinks } from './data/desktop-links.ts';
@@ -40,6 +42,8 @@ export type ServiceContext = {
   environments: EnvironmentList;
   remotes: RemoteCache;
   projects: ProjectRegistry;
+  catalog: AgentCatalogSource;
+  credentials: ConnectedCredentials;
   createJobs: CreateJobs;
   statusView: (directory: string | null) => Promise<GuestStatusView>;
   refresh: () => Promise<SandboxSnapshot>;
@@ -74,6 +78,8 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
   const remotes = createRemoteCache({ ttlMs: TTL.remotes });
   const ranking = createProjectRanking();
   const scoper = createScoper({ environments, remotes, ranking });
+  const catalog = createAgentCatalog();
+  const credentials = createConnectedCredentials({ ttlMs: 60_000 });
   const projects = createProjectRegistry({
     file: process.env.BOAT_PROJECTS_FILE?.trim() || undefined,
   });
@@ -119,6 +125,8 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
     environments,
     remotes,
     projects,
+    catalog,
+    credentials,
     createJobs,
     statusView: async (directory) => {
       const snapshot = await sandboxes.get();

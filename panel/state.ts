@@ -1,6 +1,5 @@
 /** The panel's state cell, its message helper, and the small resets around it. */
-import type { AgentProvider } from '../shared/agent.ts';
-import type { ScopedSandboxSummary } from '../shared/routes.ts';
+import type { AgentDto, ScopedSandboxSummary } from '../shared/routes.ts';
 import type { Conversation, UiEvent } from '../shared/types.ts';
 import { initialCreateState, type CreateState } from './create-state.ts';
 
@@ -29,14 +28,18 @@ export type PanelState = {
   busy: boolean;
   loading: boolean;
   draft: string;
-  provider: AgentProvider;
+  provider: string;
   model: string;
+  reasoning: string;
+  agents: AgentDto[];
   banner: BannerState | null;
   /** The OpenChamber project, handed to the service for the project matcher. */
   directory: string | null;
   create: CreateState;
   /** On the phone: true shows the conversation list, false the chat. */
   compactList: boolean;
+  /** A just-started conversation allowed to be missing from the list for a moment. */
+  pendingConversationAt: number | null;
 };
 
 export type Toast = (kind: 'info' | 'success' | 'error', message: string) => void;
@@ -56,10 +59,13 @@ export const initialState = (directory: string | null): PanelState => ({
   draft: '',
   provider: 'claude',
   model: '',
+  reasoning: '',
+  agents: [],
   banner: null,
   directory,
   create: initialCreateState(),
   compactList: true,
+  pendingConversationAt: null,
 });
 
 export type Cell = {
@@ -98,6 +104,7 @@ export const resetConversation = (cell: Cell): void => {
     running: false,
     live: false,
     watchBroken: false,
+    pendingConversationAt: null,
   });
 };
 

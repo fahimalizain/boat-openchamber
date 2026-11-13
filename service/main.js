@@ -277,9 +277,21 @@ var parseBoatJson = (output) => {
   }
   return items.length > 0 ? items : null;
 };
+var readBoatLine = (raw) => {
+  if (!isRecord(raw))
+    return null;
+  const event = readString(raw.event);
+  const final = typeof raw.final === "boolean" ? raw.final : null;
+  const data = isRecord(raw.data) ? raw.data : null;
+  if (event && data) {
+    return { value: { ...data, event }, event, final };
+  }
+  return { value: raw, event, final };
+};
 var errorMessage = (stdout, stderr, fallback) => {
   const parsed = parseBoatJson(stdout) ?? parseBoatJson(stderr);
-  const record = isRecord(parsed) ? parsed : Array.isArray(parsed) && isRecord(parsed[0]) ? parsed[0] : null;
+  const first = Array.isArray(parsed) ? parsed[0] : parsed;
+  const record = readBoatLine(first)?.value ?? null;
   if (record) {
     const nested = isRecord(record.error) ? record.error : null;
     const message = readString(nested?.message) ?? readString(record.message) ?? readString(record.error);
@@ -352,14 +364,16 @@ var spawnBoat = (command, args) => spawn(requireBinary(), [command, "--json", "-
 
 // service/create/progress.ts
 var parseCreateLine = (value) => {
-  if (!isRecord(value))
+  const line = readBoatLine(value);
+  if (!line)
     return null;
-  const event = readString(value.event);
-  const nested = isRecord(value.error) ? value.error : null;
+  const record = line.value;
+  const event = readString(record.event) ?? line.event;
+  const nested = isRecord(record.error) ? record.error : null;
   return {
-    sandboxId: readString(value.id) ?? readString(value.sandboxId),
+    sandboxId: readString(record.id) ?? readString(record.sandboxId),
     ready: event === "ready",
-    failure: event === "error" ? readString(nested?.message) ?? readString(value.error) ?? readString(value.message) ?? "The create failed." : null
+    failure: event === "error" ? readString(nested?.message) ?? readString(record.error) ?? readString(record.message) ?? "The create failed." : null
   };
 };
 
@@ -435,6 +449,209 @@ var createCreateJobs = (deps) => {
   return { busy: () => child !== null, start };
 };
 
+// service/data/agent-catalog.ts
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname, join as join2 } from "node:path";
+var CATALOG_URL = "https://boat.dev/api/provider-models";
+var CATALOG_TTL_MS = 60 * 60000;
+var RETRY_MS = 60000;
+var DEFAULT_FILE = join2(homedir2(), ".boat-openchamber", "agents.json");
+var stringList = (value) => Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : [];
+var parseModels = (value) => {
+  if (!Array.isArray(value))
+    return [];
+  return value.filter(isRecord).flatMap((model) => {
+    const id = readString(model.id);
+    if (!id)
+      return [];
+    const reasoning = isRecord(model.reasoningEffort) ? model.reasoningEffort : null;
+    const supported = stringList(reasoning?.supported);
+    return [{
+      id,
+      label: readString(model.label) ?? id,
+      credentialIds: stringList(model.credentialIds),
+      reasoning: supported.length > 0 ? { supported, default: readString(reasoning?.default) } : null,
+      fast: model.fastMode === true
+    }];
+  });
+};
+var parseAgentCatalog = (raw) => {
+  if (!isRecord(raw))
+    return [];
+  const agents = [];
+  for (const [harness, entry] of Object.entries(raw)) {
+    if (!isRecord(entry))
+      continue;
+    const cli = isRecord(entry.cli) ? entry.cli : null;
+    const provider = readString(cli?.name) ?? harness;
+    agents.push({
+      harness,
+      provider,
+      label: readString(cli?.description) ?? provider,
+      aliases: stringList(cli?.aliases),
+      order: readNumber(cli?.order) ?? 100,
+      models: parseModels(entry.models)
+    });
+  }
+  return agents.sort((left, right) => left.order - right.order || left.label.localeCompare(right.label));
+};
+var fallbackAgents = () => [
+  { harness: "codex", provider: "codex", label: "OpenAI Codex / ChatGPT", aliases: ["codex"], order: 1, models: [] },
+  { harness: "claude-code", provider: "claude", label: "Claude Code", aliases: ["claude", "claude-code"], order: 2, models: [] },
+  { harness: "pi", provider: "pi", label: "pi", aliases: ["pi"], order: 3, models: [] },
+  { harness: "opencode", provider: "opencode", label: "OpenCode", aliases: ["opencode"], order: 4, models: [] },
+  { harness: "prime-agent", provider: "prime", label: "Prime Agent", aliases: ["prime", "prime-agent"], order: 5, models: [] },
+  { harness: "kimi", provider: "kimi", label: "Kimi Code", aliases: ["kimi", "kimi-code"], order: 6, models: [] },
+  { harness: "mistral", provider: "mistral", label: "Mistral Vibe", aliases: ["mistral"], order: 7, models: [] }
+];
+var providerForHarness = (agents, harness) => {
+  if (!harness)
+    return null;
+  const key = harness.trim().toLowerCase();
+  if (!key)
+    return null;
+  const match = agents.find((agent) => [agent.harness, agent.provider, ...agent.aliases].some((name) => name.toLowerCase() === key));
+  return match?.provider ?? null;
+};
+var agentOptions = (agents, connected) => agents.map((agent) => {
+  const models = agent.models.map((model) => ({
+    id: model.id,
+    label: model.label,
+    available: connected === null || model.credentialIds.length === 0 || model.credentialIds.some((credential) => connected.has(credential)),
+    reasoning: model.reasoning,
+    fast: model.fast
+  }));
+  return {
+    provider: agent.provider,
+    label: agent.label,
+    order: agent.order,
+    available: models.length === 0 ? true : models.some((model) => model.available),
+    models
+  };
+});
+var parseStored = (raw) => {
+  if (!isRecord(raw) || !Array.isArray(raw.agents))
+    return null;
+  const agents = raw.agents.filter(isRecord).flatMap((entry) => {
+    const harness = readString(entry.harness);
+    const provider = readString(entry.provider);
+    if (!harness || !provider)
+      return [];
+    const models = Array.isArray(entry.models) ? entry.models.filter(isRecord).flatMap((model) => {
+      const id = readString(model.id);
+      if (!id)
+        return [];
+      const reasoning = isRecord(model.reasoning) ? model.reasoning : null;
+      const supported = stringList(reasoning?.supported);
+      return [{
+        id,
+        label: readString(model.label) ?? id,
+        credentialIds: stringList(model.credentialIds),
+        reasoning: supported.length > 0 ? { supported, default: readString(reasoning?.default) } : null,
+        fast: model.fast === true
+      }];
+    }) : [];
+    return [{
+      harness,
+      provider,
+      label: readString(entry.label) ?? provider,
+      aliases: stringList(entry.aliases),
+      order: readNumber(entry.order) ?? 100,
+      models
+    }];
+  });
+  return agents.length > 0 ? agents : null;
+};
+var readStored = (file) => {
+  try {
+    return parseStored(JSON.parse(readFileSync(file, "utf8")));
+  } catch {
+    return null;
+  }
+};
+var writeStored = (file, catalog) => {
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(catalog));
+  } catch {}
+};
+var createAgentCatalog = (options = {}) => {
+  const url = options.url ?? CATALOG_URL;
+  const file = options.file ?? DEFAULT_FILE;
+  const ttlMs = options.ttlMs ?? CATALOG_TTL_MS;
+  const clock = options.now ?? Date.now;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  let current = null;
+  let loading = null;
+  let retryAt = 0;
+  const load = async () => {
+    const fetchedAt = clock();
+    try {
+      const response = await fetchImpl(url, { signal: AbortSignal.timeout(8000) });
+      if (!response.ok)
+        throw new Error(`The catalogue answered HTTP ${response.status}.`);
+      const agents = parseAgentCatalog(await response.json());
+      if (agents.length === 0)
+        throw new Error("The catalogue was empty.");
+      current = { fetchedAt, agents };
+      writeStored(file, current);
+      return current;
+    } catch {
+      if (!current) {
+        current = { fetchedAt: 0, agents: readStored(file) ?? fallbackAgents() };
+      }
+      retryAt = clock() + RETRY_MS;
+      return current;
+    }
+  };
+  return {
+    get: async () => {
+      if (current && clock() - current.fetchedAt < ttlMs)
+        return current;
+      if (current && clock() < retryAt)
+        return current;
+      if (loading)
+        return loading;
+      loading = load().finally(() => {
+        loading = null;
+      });
+      return loading;
+    }
+  };
+};
+
+// service/data/connected-credentials.ts
+var createConnectedCredentials = (options) => {
+  let names = null;
+  let loadedAt = 0;
+  let loading = null;
+  const load = async () => {
+    try {
+      const data = await runBoat("ai", ["profiles"], { timeoutMs: 15000 });
+      const profiles = isRecord(data) && Array.isArray(data.profiles) ? data.profiles.filter(isRecord) : [];
+      const chosen = profiles.find((profile) => profile.isDefault === true) ?? profiles[0] ?? null;
+      names = chosen && Array.isArray(chosen.connected) ? chosen.connected.filter((entry) => typeof entry === "string") : [];
+    } catch {
+      names = null;
+    }
+    loadedAt = Date.now();
+    return names;
+  };
+  return {
+    get: async () => {
+      if (loadedAt > 0 && Date.now() - loadedAt < options.ttlMs)
+        return names;
+      if (loading)
+        return loading;
+      loading = load().finally(() => {
+        loading = null;
+      });
+      return loading;
+    }
+  };
+};
+
 // service/data/environment-list.ts
 var createEnvironmentList = (options) => {
   let entries = [];
@@ -462,25 +679,37 @@ var createEnvironmentList = (options) => {
 };
 
 // service/domain/conversations.ts
+var parseConversationRows = (rows) => rows.flatMap((row) => {
+  const line = readBoatLine(row);
+  if (!line)
+    return [];
+  const value = line.value;
+  const id = readString(value.id) ?? readString(value.conversationId);
+  if (!id)
+    return [];
+  return [{
+    id,
+    createdAt: readString(value.createdAt),
+    lastPromptAt: readString(value.lastPromptAt),
+    prompts: readNumber(value.prompts) ?? 0,
+    running: value.running === true,
+    lastHarness: readString(value.lastHarness) ?? readString(value.harness),
+    lastModel: readString(value.lastModel) ?? readString(value.model),
+    lastPromptPreview: readString(value.lastPromptPreview) ?? readString(value.lastPrompt),
+    current: value.current === true
+  }];
+});
+var conversationRows = (data) => {
+  if (Array.isArray(data))
+    return data;
+  if (isRecord(data)) {
+    return Array.isArray(data.conversations) ? data.conversations : [data];
+  }
+  return [];
+};
 var listConversations = async (sandboxId) => {
   const data = await runBoat("conversations", [sandboxId], { timeoutMs: 15000 });
-  const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.conversations) ? data.conversations : [];
-  return rows.filter(isRecord).flatMap((row) => {
-    const id = readString(row.id) ?? readString(row.conversationId);
-    if (!id)
-      return [];
-    return [{
-      id,
-      createdAt: readString(row.createdAt),
-      lastPromptAt: readString(row.lastPromptAt),
-      prompts: readNumber(row.prompts) ?? 0,
-      running: row.running === true,
-      lastHarness: readString(row.lastHarness) ?? readString(row.harness),
-      lastModel: readString(row.lastModel) ?? readString(row.model),
-      lastPromptPreview: readString(row.lastPromptPreview) ?? readString(row.lastPrompt),
-      current: row.current === true
-    }];
-  });
+  return parseConversationRows(conversationRows(data));
 };
 
 // service/data/conversation-list.ts
@@ -718,15 +947,15 @@ var createPlanNote = (options) => {
 };
 
 // service/data/project-registry.ts
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { dirname, isAbsolute, join as join2 } from "node:path";
+import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { dirname as dirname2, isAbsolute, join as join3 } from "node:path";
 var MAX_PROJECTS = 24;
-var DEFAULT_FILE = join2(homedir2(), ".boat-openchamber", "projects.json");
+var DEFAULT_FILE2 = join3(homedir3(), ".boat-openchamber", "projects.json");
 var usable = (directory) => typeof directory === "string" && isAbsolute(directory) && !directory.includes("\x00") && directory.length <= 1024;
 var read = (file) => {
   try {
-    const parsed = JSON.parse(readFileSync(file, "utf8"));
+    const parsed = JSON.parse(readFileSync2(file, "utf8"));
     if (!isRecord(parsed) || !Array.isArray(parsed.directories))
       return [];
     return parsed.directories.filter(usable).slice(0, MAX_PROJECTS);
@@ -735,12 +964,12 @@ var read = (file) => {
   }
 };
 var createProjectRegistry = (options = {}) => {
-  const file = options.file ?? DEFAULT_FILE;
+  const file = options.file ?? DEFAULT_FILE2;
   const directories = new Set(read(file));
   const save = () => {
     try {
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, JSON.stringify({ directories: [...directories] }, null, 2));
+      mkdirSync2(dirname2(file), { recursive: true });
+      writeFileSync2(file, JSON.stringify({ directories: [...directories] }, null, 2));
     } catch {}
   };
   return {
@@ -974,24 +1203,26 @@ var readTools = (value) => {
   });
 };
 var normalizeEvent = (raw, fallbackConversation = null) => {
-  if (!isRecord(raw))
+  const line = readBoatLine(raw);
+  if (!line)
     return null;
-  const id = readString(raw.id) ?? readString(raw.eventId);
+  const value = line.value;
+  const id = readString(value.id) ?? readString(value.eventId);
   if (!id)
     return null;
-  const type = readString(raw.type) ?? readString(raw.event) ?? "event";
-  const data = isRecord(raw.data) ? raw.data : {};
+  const type = readString(value.type) ?? readString(value.event) ?? "event";
+  const data = isRecord(value.data) ? value.data : {};
   const base = {
     id,
     type,
-    at: readTimestamp(raw.timestamp) || Date.now(),
+    at: readTimestamp(value.timestamp) || Date.now(),
     text: "",
     streaming: false,
     model: null,
     status: null,
     tools: [],
     error: null,
-    conversationId: readString(raw.conversationId) ?? readString(data.conversationId) ?? fallbackConversation
+    conversationId: readString(value.conversationId) ?? readString(data.conversationId) ?? fallbackConversation
   };
   if (type === "prompt") {
     const status = readString(data.status);
@@ -1009,7 +1240,7 @@ var normalizeEvent = (raw, fallbackConversation = null) => {
       ...base,
       role: "assistant",
       text: clip(readString(data.content) ?? "", TEXT_MAX),
-      streaming: data.is_streaming === true,
+      streaming: data.is_streaming === true || line.final === false,
       model: readString(data.model),
       tools: readTools(data.tools),
       error: readString(data.error)
@@ -1024,7 +1255,7 @@ var normalizeEvent = (raw, fallbackConversation = null) => {
     };
   }
   if (type === "error" || type === "sandbox.error") {
-    const message = readString(data.message) ?? readString(data.error) ?? readString(raw.error) ?? "The agent failed.";
+    const message = readString(data.message) ?? readString(data.error) ?? readString(value.error) ?? "The agent failed.";
     return { ...base, role: "system", text: clip(message, TEXT_MAX), error: message };
   }
   const text = readString(data.content) ?? readString(data.message) ?? "";
@@ -1035,15 +1266,28 @@ var normalizeEvent = (raw, fallbackConversation = null) => {
     error: readString(data.error)
   };
 };
+var mergeEventRows = (rows, conversationId) => {
+  const byId = new Map;
+  for (const row of rows) {
+    const event = normalizeEvent(row, conversationId);
+    if (event)
+      byId.set(event.id, event);
+  }
+  return [...byId.values()];
+};
+var eventRows = (data) => {
+  if (Array.isArray(data))
+    return data;
+  if (isRecord(data)) {
+    return Array.isArray(data.events) ? data.events : [data];
+  }
+  return [];
+};
 var listEvents = async (sandboxId, conversationId, options = {}) => {
   const data = await runBoat("events", [sandboxId, "--convo", conversationId], {
     timeoutMs: options.timeoutMs ?? 30000
   });
-  const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.events) ? data.events : [];
-  return rows.flatMap((row) => {
-    const event = normalizeEvent(row, conversationId);
-    return event ? [event] : [];
-  });
+  return mergeEventRows(eventRows(data), conversationId);
 };
 var eventSize = (event) => 200 + event.text.length + event.tools.reduce((total, tool) => total + tool.name.length + tool.detail.length + 32, 0);
 
@@ -1819,6 +2063,8 @@ var createServiceContext = (host) => {
   const remotes = createRemoteCache({ ttlMs: TTL.remotes });
   const ranking = createProjectRanking();
   const scoper = createScoper({ environments, remotes, ranking });
+  const catalog = createAgentCatalog();
+  const credentials = createConnectedCredentials({ ttlMs: 60000 });
   const projects = createProjectRegistry({
     file: process.env.BOAT_PROJECTS_FILE?.trim() || undefined
   });
@@ -1860,6 +2106,8 @@ var createServiceContext = (host) => {
     environments,
     remotes,
     projects,
+    catalog,
+    credentials,
     createJobs,
     statusView: async (directory) => {
       const snapshot = await sandboxes.get();
@@ -1934,9 +2182,9 @@ var isAgentProvider = (value) => AGENT_PROVIDERS.includes(value);
 
 // service/domain/agent.ts
 import readline3 from "node:readline";
-var MUTATION_TIMEOUT_MS2 = 20000;
-var EARLY_RETURN_MS = 2500;
-var promptSandbox = (sandboxId, text, options) => new Promise((resolve, reject) => {
+
+// service/domain/prompt-argv.ts
+var promptCommand = (sandboxId, text, options) => {
   const args = [sandboxId];
   if (options.newConversation)
     args.push("--new");
@@ -1946,7 +2194,17 @@ var promptSandbox = (sandboxId, text, options) => new Promise((resolve, reject) 
     args.push("--provider", options.provider);
   if (options.model)
     args.push("--model", options.model);
+  if (options.reasoning)
+    args.push("--reasoning-effort", options.reasoning);
   args.push("--", text);
+  return args;
+};
+
+// service/domain/agent.ts
+var MUTATION_TIMEOUT_MS2 = 20000;
+var EARLY_RETURN_MS = 2500;
+var promptSandbox = (sandboxId, text, options) => new Promise((resolve, reject) => {
+  const args = promptCommand(sandboxId, text, options);
   const child = spawnBoat("prompt", args);
   const stdout = child.stdout;
   if (!stdout) {
@@ -2038,26 +2296,41 @@ var agentRoutes = (deps) => [
     const sandboxId = readString(body?.sandbox);
     const text = readString(body?.text);
     const conversationId = readString(body?.conversation);
-    const provider = readString(body?.provider);
-    const model = readString(body?.model);
+    const requestProvider = readString(body?.provider);
+    let provider = requestProvider;
+    let model = readString(body?.model);
     if (!isSandboxId(sandboxId))
       return context.reply(400, errorBody("Unknown sandbox id."));
     if (!text)
       return context.reply(400, errorBody("Write a prompt first."));
     if (text.length > MAX_PROMPT_CHARS)
       return context.reply(400, errorBody("That prompt is too long."));
-    if (provider && !isAgentProvider(provider))
+    if (requestProvider && !isAgentProvider(requestProvider)) {
       return context.reply(400, errorBody("Unknown agent provider."));
+    }
     if (conversationId && !isConversationId(conversationId)) {
       return context.reply(400, errorBody("Unknown conversation id."));
     }
+    if (conversationId) {
+      try {
+        const conversations = await deps.conversations.get(sandboxId);
+        const known = conversations.find((entry) => entry.id === conversationId) ?? null;
+        if (known) {
+          const catalog = await deps.catalog.get();
+          provider = providerForHarness(catalog.agents, known.lastHarness) ?? provider;
+          model = known.lastModel ?? model;
+        }
+      } catch {}
+    }
+    const options = {
+      provider: provider ?? undefined,
+      model: model && model.length <= MAX_MODEL_CHARS ? model : undefined,
+      reasoning: readString(body?.reasoning) ?? undefined,
+      conversation: conversationId ?? undefined,
+      newConversation: !conversationId
+    };
     try {
-      const started = await promptSandbox(sandboxId, text, {
-        provider: provider ?? undefined,
-        model: model && model.length <= MAX_MODEL_CHARS ? model : undefined,
-        conversation: conversationId ?? undefined,
-        newConversation: !conversationId
-      });
+      const started = await promptSandbox(sandboxId, text, options);
       deps.conversations.forget(sandboxId);
       const answer = { ok: true, ...started };
       return context.reply(200, answer);
@@ -2096,6 +2369,19 @@ var agentRoutes = (deps) => [
       return context.reply(200, { ok: true });
     } catch (failure) {
       return context.reply(502, errorBody(describeFailure(failure).text));
+    }
+  })
+];
+
+// service/routes/agents.ts
+var agentCatalogRoutes = (deps) => [
+  route("GET", "/agents", async (context) => {
+    try {
+      const [catalog, connected] = await Promise.all([deps.catalog.get(), deps.credentials.get()]);
+      const agents = agentOptions(catalog.agents, connected === null ? null : new Set(connected));
+      return context.reply(200, agents);
+    } catch (failure) {
+      return context.reply(502, { error: describeFailure(failure).text });
     }
   })
 ];
@@ -2763,6 +3049,7 @@ var route2 = createRouter([
   ...eventRoutes(context),
   ...createRoutes(context),
   ...agentRoutes(context),
+  ...agentCatalogRoutes(context),
   ...mentionRoutes(context),
   ...projectRoutes({
     projects: context.projects,

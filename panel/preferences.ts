@@ -10,6 +10,7 @@ export type Preferences = {
   sandboxId: string | null;
   provider: string | null;
   model: string | null;
+  reasoning: string | null;
 };
 
 export type PreferencesStorage = {
@@ -47,6 +48,7 @@ export const readPreferences = (value: unknown): Preferences | null => {
     sandboxId: readString(value.sandboxId),
     provider: readString(value.provider),
     model: readString(value.model),
+    reasoning: readString(value.reasoning),
   };
 };
 
@@ -54,6 +56,7 @@ const serialize = (preferences: Preferences): JsonValue => ({
   sandboxId: preferences.sandboxId,
   provider: preferences.provider,
   model: preferences.model,
+  reasoning: preferences.reasoning,
 });
 
 export const createPreferences = (options: {

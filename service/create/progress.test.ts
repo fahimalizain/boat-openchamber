@@ -38,3 +38,15 @@ test('anything that is not an object is ignored', () => {
   assert.equal(parseCreateLine('created'), null);
   assert.equal(parseCreateLine([]), null);
 });
+
+test('wrapped progress lines are unwrapped too', () => {
+  assert.deepEqual(parseCreateLine({ event: 'ready', data: { id: 'bx_7ppmwt9v' } }), {
+    sandboxId: 'bx_7ppmwt9v',
+    ready: true,
+    failure: null,
+  });
+  assert.equal(
+    parseCreateLine({ event: 'error', data: { message: 'unknown environment' } })?.failure,
+    'unknown environment',
+  );
+});

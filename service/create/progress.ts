@@ -1,5 +1,6 @@
-/** One line of `boat new` / `boat fork --wait` output. */
+/** One line of `boat new` / `boat fork --wait` output, flat or wrapped. */
 import { isRecord, readString } from '../../shared/json.ts';
+import { readBoatLine } from '../boat.ts';
 
 export type CreateLine = {
   sandboxId: string | null;
@@ -8,15 +9,17 @@ export type CreateLine = {
 };
 
 export const parseCreateLine = (value: unknown): CreateLine | null => {
-  if (!isRecord(value)) return null;
-  const event = readString(value.event);
-  const nested = isRecord(value.error) ? value.error : null;
+  const line = readBoatLine(value);
+  if (!line) return null;
+  const record = line.value;
+  const event = readString(record.event) ?? line.event;
+  const nested = isRecord(record.error) ? record.error : null;
 
   return {
-    sandboxId: readString(value.id) ?? readString(value.sandboxId),
+    sandboxId: readString(record.id) ?? readString(record.sandboxId),
     ready: event === 'ready',
     failure: event === 'error'
-      ? readString(nested?.message) ?? readString(value.error) ?? readString(value.message) ?? 'The create failed.'
+      ? readString(nested?.message) ?? readString(record.error) ?? readString(record.message) ?? 'The create failed.'
       : null,
   };
 };

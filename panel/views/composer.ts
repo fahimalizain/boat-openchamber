@@ -1,6 +1,7 @@
-import { mountSelect, mountTextField, type SelectOption } from '@openchamber/sdk/ui';
+/** The composer's agent, model and reasoning selects, and the message row. */
+import { mountSelect, mountTextField } from '@openchamber/sdk/ui';
 
-import { AGENT_PROVIDERS } from '../../shared/agent.ts';
+import { modelsOf, reasoningOf, sortAgents } from '../agents.ts';
 import { buttonSlot } from '../kit.ts';
 import type { PanelState } from '../store.ts';
 
@@ -12,6 +13,7 @@ export const createComposer = (
     providerRow: HTMLElement;
     provider: HTMLElement;
     model: HTMLElement;
+    reasoning: HTMLElement;
     field: HTMLElement;
     actions: HTMLElement;
   },
@@ -19,21 +21,30 @@ export const createComposer = (
     onDraft: (text: string) => void;
     onProvider: (provider: string) => void;
     onModel: (model: string) => void;
+    onReasoning: (reasoning: string) => void;
     onSubmit: () => void;
     onInterrupt: () => void;
   },
 ): Composer => {
   const provider = mountSelect(roots.provider, {
+    label: 'Agent',
     value: 'claude',
-    options: AGENT_PROVIDERS.map((id): SelectOption => ({ id, label: id })),
-    placeholder: 'Provider',
+    options: [],
     onChange: handlers.onProvider,
   });
 
-  const model = mountTextField(roots.model, {
+  const model = mountSelect(roots.model, {
+    label: 'Model',
     value: '',
-    placeholder: 'Model (optional)',
+    options: [{ id: '', label: 'Default' }],
     onChange: handlers.onModel,
+  });
+
+  const reasoning = mountSelect(roots.reasoning, {
+    label: 'Reasoning',
+    value: '',
+    options: [{ id: '', label: 'Default' }],
+    onChange: handlers.onReasoning,
   });
 
   const field = mountTextField(roots.field, {
@@ -60,28 +71,65 @@ export const createComposer = (
   const render = (state: PanelState): void => {
     const open = Boolean(state.conversationId);
     const running = open && state.running;
+    const busy = state.busy;
 
     roots.providerRow.hidden = open;
     roots.hint.textContent = !state.sandboxId
       ? 'Create a sandbox with `boat new` to start.'
       : open
-        ? running ? 'Steer the running turn' : 'Reply in this conversation'
+        ? running ? 'Steer the running turn' : 'Reply'
         : 'New conversation';
 
-    provider.update({ value: state.provider });
-    send.handle.update({ label: running ? 'Steer' : 'Send', disabled: state.busy });
+    if (!open) {
+      const agents = sortAgents(state.agents);
+      provider.update({
+        value: state.provider,
+        options: agents.map((agent) => ({
+          id: agent.provider,
+          label: agent.available ? agent.label : `${agent.label} (not set up)`,
+        })),
+        disabled: busy || agents.length === 0,
+      });
+
+      const models = modelsOf(state.agents, state.provider);
+      model.update({
+        value: state.model,
+        options: [
+          { id: '', label: 'Default' },
+          ...models.map((entry) => ({
+            id: entry.id,
+            label: entry.available ? entry.label : `${entry.label} (not set up)`,
+          })),
+        ],
+        disabled: busy,
+      });
+
+      const levels = reasoningOf(state.agents, state.provider, state.model);
+      roots.reasoning.hidden = !levels || levels.supported.length === 0;
+      if (levels) {
+        reasoning.update({
+          value: levels.supported.includes(state.reasoning) ? state.reasoning : '',
+          options: [
+            { id: '', label: 'Default' },
+            ...levels.supported.map((level) => ({ id: level, label: level })),
+          ],
+          disabled: busy,
+        });
+      }
+    }
+
+    send.handle.update({ label: running ? 'Steer' : 'Send', disabled: busy });
     interrupt.slot.hidden = !running;
-    interrupt.handle.update({ disabled: state.busy });
+    interrupt.handle.update({ disabled: busy });
     field.update({
       value: state.draft,
-      disabled: state.busy || !state.sandboxId,
+      disabled: busy || !state.sandboxId,
       placeholder: running
         ? 'Add to the running turn…'
         : open
           ? 'Continue this conversation…'
           : 'Ask the sandbox agent…',
     });
-    model.update({ value: state.model, disabled: state.busy });
   };
 
   return { render };

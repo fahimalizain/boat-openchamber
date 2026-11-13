@@ -17,16 +17,21 @@ test('preference keys are stable, short and distinct per folder', () => {
 
 test('stored values are read defensively', () => {
   assert.deepEqual(
-    readPreferences({ sandboxId: 'bx_7ppmwt9v', provider: 'claude', model: 'sonnet' }),
-    { sandboxId: 'bx_7ppmwt9v', provider: 'claude', model: 'sonnet' },
+    readPreferences({ sandboxId: 'bx_7ppmwt9v', provider: 'claude', model: 'sonnet', reasoning: 'high' }),
+    { sandboxId: 'bx_7ppmwt9v', provider: 'claude', model: 'sonnet', reasoning: 'high' },
   );
-  assert.deepEqual(readPreferences({ sandboxId: 42 }), { sandboxId: null, provider: null, model: null });
+  assert.deepEqual(readPreferences({ sandboxId: 42 }), {
+    sandboxId: null,
+    provider: null,
+    model: null,
+    reasoning: null,
+  });
   assert.equal(readPreferences('nope'), null);
 });
 
 test('without device storage the preferences live in memory', async () => {
   const store = createPreferences({ storage: null, device: false });
-  const wanted = { sandboxId: 'bx_7ppmwt9v', provider: 'claude', model: 'sonnet' };
+  const wanted = { sandboxId: 'bx_7ppmwt9v', provider: 'claude', model: 'sonnet', reasoning: 'high' };
 
   assert.equal(await store.get('/repo'), null);
   await store.save('/repo', wanted);
@@ -45,7 +50,7 @@ test('a host that refuses device storage falls back to memory', async () => {
     },
   };
   const store = createPreferences({ storage, device: true });
-  const wanted = { sandboxId: null, provider: 'codex', model: '' };
+  const wanted = { sandboxId: null, provider: 'codex', model: '', reasoning: null };
 
   await store.save('/repo', wanted);
   assert.equal(sets, 1);
