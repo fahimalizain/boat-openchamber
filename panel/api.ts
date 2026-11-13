@@ -2,20 +2,23 @@
 import type {
   ActionRequest,
   ActionResponse,
-  AgentDto,
-  ConversationsResponse,
   CreateOptionsResponse,
   CreateSandboxRequest,
   CreateSandboxResponse,
-  HistoryResponse,
-  InterruptRequest,
   OkBody,
-  PromptRequest,
-  PromptResponse,
-  SandboxesResponse,
-  SteerRequest,
-  WatchRequest,
+  OpencodeAbortRequest,
+  OpencodeAbortResponse,
+  OpencodeCatalogResponse,
+  OpencodeCreateSessionRequest,
+  OpencodeMessagesResponse,
+  OpencodePermissionReplyRequest,
+  OpencodePromptRequest,
+  OpencodePromptResponse,
+  OpencodeQuestionReplyRequest,
+  OpencodeSessionResponse,
+  OpencodeSessionsResponse,
   ProjectsRequest,
+  SandboxesResponse,
 } from '../shared/routes.ts';
 
 export type HostRequester = {
@@ -28,18 +31,20 @@ export type HostRequester = {
 
 export type ServiceClient = {
   sandboxes: (directory: string | null) => Promise<SandboxesResponse>;
-  conversations: (sandboxId: string) => Promise<ConversationsResponse>;
-  history: (sandboxId: string, conversationId: string) => Promise<HistoryResponse>;
-  watch: (sandboxId: string, conversationId: string) => Promise<OkBody>;
-  unwatch: (sandboxId: string, conversationId: string) => Promise<OkBody>;
-  prompt: (request: PromptRequest) => Promise<PromptResponse>;
-  steer: (request: SteerRequest) => Promise<OkBody>;
-  interrupt: (request: InterruptRequest) => Promise<OkBody>;
   action: (request: ActionRequest) => Promise<ActionResponse>;
   createOptions: (directory: string | null) => Promise<CreateOptionsResponse>;
   create: (request: CreateSandboxRequest) => Promise<CreateSandboxResponse>;
-  agents: () => Promise<AgentDto[]>;
   rememberProjects: (directories: string[]) => Promise<OkBody>;
+  sessions: (sandboxId: string, directory: string | null) => Promise<OpencodeSessionsResponse>;
+  messages: (sandboxId: string, sessionId: string) => Promise<OpencodeMessagesResponse>;
+  catalog: (sandboxId: string) => Promise<OpencodeCatalogResponse>;
+  createSession: (request: OpencodeCreateSessionRequest) => Promise<OpencodeSessionResponse>;
+  prompt: (request: OpencodePromptRequest) => Promise<OpencodePromptResponse>;
+  abort: (request: OpencodeAbortRequest) => Promise<OpencodeAbortResponse>;
+  permission: (request: OpencodePermissionReplyRequest) => Promise<OkBody>;
+  question: (request: OpencodeQuestionReplyRequest) => Promise<OkBody>;
+  watch: (sandboxId: string) => Promise<OkBody>;
+  unwatch: (sandboxId: string) => Promise<OkBody>;
 };
 
 const query = (values: Record<string, string>): string => `?${new URLSearchParams(values).toString()}`;
@@ -73,31 +78,29 @@ export const createServiceClient = (host: HostRequester): ServiceClient => {
       'GET',
       directory ? `/sandboxes${query({ directory })}` : '/sandboxes',
     ),
-    conversations: (sandboxId) => call('GET', `/conversations${query({ sandbox: sandboxId })}`),
-    history: (sandboxId, conversationId) => call(
-      'GET',
-      `/history${query({ sandbox: sandboxId, conversation: conversationId })}`,
-    ),
-    watch: (sandboxId, conversationId) => call('POST', '/watch', {
-      sandbox: sandboxId,
-      conversation: conversationId,
-    } satisfies WatchRequest),
-    unwatch: (sandboxId, conversationId) => call('POST', '/unwatch', {
-      sandbox: sandboxId,
-      conversation: conversationId,
-    } satisfies WatchRequest),
-    prompt: (request) => call('POST', '/prompt', request),
-    steer: (request) => call('POST', '/steer', request),
-    interrupt: (request) => call('POST', '/interrupt', request),
     action: (request) => call('POST', '/action', request),
     createOptions: (directory) => call(
       'GET',
       directory ? `/create-options${query({ directory })}` : '/create-options',
     ),
     create: (request) => call('POST', '/create', request),
-    agents: () => call('GET', '/agents'),
     rememberProjects: (directories) => call('POST', '/projects', {
       directories,
     } satisfies ProjectsRequest),
+    sessions: (sandboxId, directory) => call('GET', `/opencode/sessions${query(directory
+      ? { sandbox: sandboxId, directory }
+      : { sandbox: sandboxId })}`),
+    messages: (sandboxId, sessionId) => call(
+      'GET',
+      `/opencode/messages${query({ sandbox: sandboxId, session: sessionId })}`,
+    ),
+    catalog: (sandboxId) => call('GET', `/opencode/catalog${query({ sandbox: sandboxId })}`),
+    createSession: (request) => call('POST', '/opencode/session', request),
+    prompt: (request) => call('POST', '/opencode/prompt', request),
+    abort: (request) => call('POST', '/opencode/abort', request),
+    permission: (request) => call('POST', '/opencode/permission', request),
+    question: (request) => call('POST', '/opencode/question', request),
+    watch: (sandboxId) => call('POST', '/opencode/watch', { sandbox: sandboxId }),
+    unwatch: (sandboxId) => call('POST', '/opencode/unwatch', { sandbox: sandboxId }),
   };
 };

@@ -1,10 +1,30 @@
-/** What the panel asks for: prompts, steers, interrupts, sandbox commands. */
-import type { SandboxAction } from '../shared/types.ts';
-import { defaultProvider, modelsOf } from './agents.ts';
+/** What the panel asks for: sessions, prompts, stops, answers and sandbox commands. */
+import type {
+  OpencodeModelRef,
+  OpencodePermissionDecision,
+  OpencodeQuestionAnswer,
+  OpencodeSession,
+  OpencodeSessionStatus,
+  OpencodeStreamEvent,
+} from '../shared/opencode.ts';
+import { isUpState, type SandboxAction } from '../shared/types.ts';
 import type { ServiceClient } from './api.ts';
+import {
+  modelRefFromKey,
+  modelRefWithVariant,
+  settleSelection,
+  type Selection,
+} from './catalog.ts';
+import {
+  applyChatEvent,
+  applySessionEvent,
+  createChatModel,
+  withoutPermission,
+  withoutQuestion,
+} from './chat-model.ts';
 import type { Loaders } from './data.ts';
-import type { Preferences, PreferenceStore } from './preferences.ts';
-import type { Cell, Reporter } from './state.ts';
+import type { ModelChoice, Preferences, PreferenceStore } from './preferences.ts';
+import type { Cell, PanelState, Reporter } from './state.ts';
 import { defaultTab, type PanelTab } from './tab.ts';
 
 export type Actions = {
@@ -12,18 +32,21 @@ export type Actions = {
   setDirectory: (directory: string | null) => void;
   selectSandbox: (sandboxId: string) => Promise<void>;
   openSandbox: (sandboxId: string) => Promise<void>;
-  selectConversation: (conversationId: string | null) => Promise<void>;
+  selectSession: (sessionId: string | null) => Promise<void>;
+  newSession: () => Promise<void>;
+  setDirectoryFilter: (directory: string) => Promise<void>;
   setTab: (tab: PanelTab) => void;
   setDraft: (text: string) => void;
-  setProvider: (provider: string) => void;
-  setModel: (model: string) => void;
-  setReasoning: (reasoning: string) => void;
+  setAgent: (agent: string) => void;
+  setModel: (key: string) => void;
+  setVariant: (variant: string) => void;
   submit: () => Promise<void>;
-  interrupt: () => Promise<void>;
+  stop: () => Promise<void>;
+  respondPermission: (requestId: string, decision: OpencodePermissionDecision) => Promise<void>;
+  respondQuestion: (questionId: string, answer: Record<string, OpencodeQuestionAnswer>) => Promise<void>;
   runSandboxAction: (action: SandboxAction, sandboxId?: string) => Promise<void>;
-  showConversationList: () => void;
+  showSessionList: () => void;
   persistPreferences: () => void;
-  refreshAgents: () => void;
 };
 
 const DONE_MESSAGES: Record<SandboxAction, string> = {
@@ -40,6 +63,18 @@ const OPENS_URL: Partial<Record<SandboxAction, string>> = {
   opencode: 'OpenCode returned no link.',
 };
 
+const talkable = (state: PanelState): boolean => {
+  const sandbox = state.sandboxes.find((entry) => entry.id === state.sandboxId) ?? null;
+  return sandbox !== null && isUpState(sandbox.state);
+};
+
+const statusEvent = (sessionID: string, status: OpencodeSessionStatus): OpencodeStreamEvent => ({
+  type: 'status',
+  sessionID,
+  status,
+  error: null,
+});
+
 export const createActions = (deps: {
   cell: Cell;
   client: ServiceClient;
@@ -51,66 +86,61 @@ export const createActions = (deps: {
 }): Actions => {
   const { cell, client, loaders, reporter, toast, openUrl, preferences } = deps;
 
-  let modelTimer: ReturnType<typeof setTimeout> | null = null;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   const savePreferences = (): void => {
     const state = cell.get();
+    const model: ModelChoice | null = state.model
+      ? { id: state.model.id, providerID: state.model.providerID }
+      : null;
     const current: Preferences = {
       sandboxId: state.sandboxId,
-      provider: state.provider,
-      model: state.model,
-      reasoning: state.reasoning,
+      agent: state.agent || null,
+      model,
+      variant: state.variant,
       tab: state.tab,
     };
     void preferences.save(state.directory, current).catch(() => {});
   };
 
   const saveModelSoon = (): void => {
-    if (modelTimer) clearTimeout(modelTimer);
-    modelTimer = setTimeout(() => {
-      modelTimer = null;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
       savePreferences();
     }, 500);
   };
 
-  /** Drop a stored agent or model the catalogue no longer offers. */
-  const ensureProvider = (): void => {
+  /** Forces a status without waiting for a stream event; the next event wins. */
+  const forceStatus = (sessionID: string, status: OpencodeSessionStatus): void => {
     const state = cell.get();
-    if (state.agents.length === 0) return;
-    if (!state.agents.some((agent) => agent.provider === state.provider)) {
-      state.provider = defaultProvider(state.agents) ?? 'claude';
-      state.model = '';
-      state.reasoning = '';
-      return;
-    }
-    if (state.model && !modelsOf(state.agents, state.provider).some((model) => model.id === state.model)) {
-      state.model = '';
-      state.reasoning = '';
-    }
-    if (state.model) {
-      const reasoning = modelsOf(state.agents, state.provider).find((model) => model.id === state.model)?.reasoning;
-      if (state.reasoning && !(reasoning?.supported.includes(state.reasoning) ?? false)) state.reasoning = '';
-    }
+    const event = statusEvent(sessionID, status);
+    cell.patch({
+      sessions: applySessionEvent(state.sessions, event),
+      ...(state.chat ? { chat: applyChatEvent(state.chat, event) } : {}),
+    });
   };
 
-  const loadAgents = async (): Promise<void> => {
-    try {
-      cell.get().agents = await client.agents();
-      ensureProvider();
-      cell.notify();
-    } catch {
-      // The composer keeps its built-in fallback until the next try.
-    }
-  };
-
-  const applyStoredPreferences = async (directory: string | null): Promise<{ sandboxId: string | null; tab: PanelTab | null }> => {
+  const applyStoredPreferences = async (
+    directory: string | null,
+  ): Promise<{ sandboxId: string | null; tab: PanelTab | null }> => {
     const stored = await preferences.get(directory);
     const state = cell.get();
-    if (stored?.provider) state.provider = stored.provider;
-    else if (state.agents.length > 0) state.provider = defaultProvider(state.agents) ?? state.provider;
-    if (stored?.model) state.model = stored.model;
-    if (stored?.reasoning) state.reasoning = stored.reasoning;
-    ensureProvider();
+    if (stored) {
+      state.agent = stored.agent ?? '';
+      state.model = stored.model
+        ? { id: stored.model.id, providerID: stored.model.providerID, variant: null }
+        : null;
+      state.variant = stored.variant;
+      if (stored.tab) state.tab = stored.tab;
+    }
+    const settled: Selection = settleSelection(
+      { agent: state.agent, model: state.model, variant: state.variant },
+      state.catalog,
+    );
+    state.agent = settled.agent;
+    state.model = settled.model;
+    state.variant = settled.variant;
     cell.notify();
     return { sandboxId: stored?.sandboxId ?? null, tab: stored?.tab ?? null };
   };
@@ -118,27 +148,27 @@ export const createActions = (deps: {
   /** Load a directory's sandboxes and settle on a tab. */
   const loadForDirectory = async (directory: string | null): Promise<void> => {
     const stored = await applyStoredPreferences(directory);
-    if (stored.tab) cell.get().tab = stored.tab;
     await loaders.sandboxes(stored.sandboxId);
     if (!stored.tab) {
       cell.get().tab = defaultTab({
         stored: null,
         sandboxId: cell.get().sandboxId,
-        conversations: cell.get().conversations.length,
+        sessions: cell.get().sessions.length,
       });
+      cell.notify();
     }
-    cell.notify();
   };
 
-  const refreshAfterAction = async (): Promise<void> => {
+  const refreshAfterAction = async (action: SandboxAction): Promise<void> => {
     await loaders.sandboxes();
-    await loaders.conversations({ autoSelect: false });
-    if (cell.get().conversationId) await loaders.history();
+    const state = cell.get();
+    if ((action === 'stop' || action === 'resume') && state.sandboxId) {
+      await loaders.activateSandbox(state.sandboxId);
+    }
   };
 
   const boot = async (): Promise<void> => {
     try {
-      await loadAgents();
       await loadForDirectory(cell.get().directory);
       cell.patch({ loading: false, banner: null });
     } catch (failure) {
@@ -147,43 +177,92 @@ export const createActions = (deps: {
     }
   };
 
-  const selectSandbox = async (sandboxId: string): Promise<void> => {
-    const state = cell.get();
-    if (sandboxId === state.sandboxId) return;
-    await activateSandbox(sandboxId);
-  };
-
   const activateSandbox = async (sandboxId: string): Promise<void> => {
     const state = cell.get();
-    const previousSandbox = state.sandboxId;
-    const previousConversation = state.conversationId;
-    if (previousSandbox && previousConversation) {
-      void client.unwatch(previousSandbox, previousConversation).catch(() => {});
-    }
-
-    cell.patch({
-      sandboxId,
-      conversationId: null,
-      conversations: [],
-      events: new Map(),
-      running: false,
-      live: false,
-      watchBroken: false,
-      pendingConversationAt: null,
-    });
-
+    if (sandboxId === state.sandboxId) return;
     try {
-      await loaders.conversations({ autoSelect: true });
+      await loaders.activateSandbox(sandboxId, state.sandboxId);
     } catch (failure) {
-      reporter.fail('Could not list conversations', failure);
+      reporter.fail('Could not list sessions', failure);
     }
     savePreferences();
+  };
+
+  const selectSandbox = async (sandboxId: string): Promise<void> => {
+    if (sandboxId === cell.get().sandboxId) return;
+    await activateSandbox(sandboxId);
   };
 
   const openSandbox = async (sandboxId: string): Promise<void> => {
     await activateSandbox(sandboxId);
-    cell.patch({ tab: 'conversations' });
+    cell.patch({ tab: 'sessions' });
     savePreferences();
+  };
+
+  const createSession = async (): Promise<OpencodeSession | null> => {
+    const state = cell.get();
+    if (!state.sandboxId) return null;
+    const model = modelRefWithVariant(state.model, state.variant);
+    const answer = await client.createSession({
+      sandbox: state.sandboxId,
+      ...(state.directoryFilter ? { directory: state.directoryFilter } : {}),
+      ...(state.agent ? { agent: state.agent } : {}),
+      ...(model ? { model } : {}),
+    });
+
+    const current = cell.get();
+    if (current.sandboxId !== state.sandboxId) return answer.session;
+    current.sessions = [answer.session, ...current.sessions.filter((entry) => entry.id !== answer.session.id)];
+    current.sessionId = answer.session.id;
+    current.chat = createChatModel({ session: answer.session, messages: [] });
+    current.compactList = false;
+    cell.notify();
+    return answer.session;
+  };
+
+  const newSession = async (): Promise<void> => {
+    const state = cell.get();
+    if (!state.sandboxId || state.busy) return;
+    if (!talkable(state)) {
+      toast('info', 'Resume the sandbox first.');
+      return;
+    }
+
+    cell.patch({ busy: true });
+    try {
+      const session = await createSession();
+      if (session) {
+        toast('success', 'Session started.');
+        reporter.setBanner(null);
+      }
+    } catch (failure) {
+      reporter.fail('Could not start a session', failure);
+    } finally {
+      cell.patch({ busy: false });
+    }
+  };
+
+  const setDirectoryFilter = async (directory: string): Promise<void> => {
+    const state = cell.get();
+    if (!state.sandboxId) return;
+
+    state.directoryFilter = directory === state.sessionDirectory ? null : directory;
+    state.sessionId = null;
+    state.chat = null;
+    cell.notify();
+    try {
+      await loaders.sessions({ autoSelect: true });
+    } catch (failure) {
+      reporter.fail('Could not list that directory', failure);
+    }
+  };
+
+  const selectSession = async (sessionId: string | null): Promise<void> => {
+    try {
+      await loaders.openSession(sessionId);
+    } catch (failure) {
+      reporter.fail('Could not read that session', failure);
+    }
   };
 
   const submit = async (): Promise<void> => {
@@ -195,47 +274,33 @@ export const createActions = (deps: {
       toast('info', 'Write a message first.');
       return;
     }
+    if (!talkable(state)) {
+      toast('info', 'Resume the sandbox first.');
+      return;
+    }
 
-    const conversationId = state.conversationId;
-    const steering = Boolean(conversationId) && state.running;
     cell.patch({ busy: true });
-
     try {
-      if (steering && conversationId) {
-        await client.steer({ sandbox: sandboxId, conversation: conversationId, text });
-        toast('success', 'Message added to the running turn.');
-      } else {
-        const model = state.model.trim() || undefined;
-        const reasoning = state.reasoning
-          && modelsOf(state.agents, state.provider).find((entry) => entry.id === state.model)?.reasoning?.supported.includes(state.reasoning)
-          ? state.reasoning
-          : undefined;
-        const answer = await client.prompt({
-          sandbox: sandboxId,
-          text,
-          ...(conversationId
-            ? { conversation: conversationId, provider: state.provider, ...(model ? { model } : {}) }
-            : {
-              provider: state.provider,
-              ...(model ? { model } : {}),
-              ...(reasoning ? { reasoning } : {}),
-            }),
-        });
-        toast('success', conversationId ? 'Prompt sent.' : 'Conversation started.');
+      const sessionId = state.sessionId ?? (await createSession())?.id ?? null;
+      if (!sessionId) return;
 
-        cell.get().draft = '';
-        await loaders.conversations({ autoSelect: false });
-        const next = answer.conversationId
-          ?? conversationId
-          ?? cell.get().conversations.find((entry) => entry.current)?.id
-          ?? cell.get().conversations[0]?.id
-          ?? null;
-        if (next && next !== cell.get().conversationId) await loaders.openConversation(next);
-        else cell.patch({ running: true });
-      }
+      const current = cell.get();
+      const model = modelRefWithVariant(current.model, current.variant);
+      await client.prompt({
+        sandbox: sandboxId,
+        session: sessionId,
+        text,
+        ...(current.agent ? { agent: current.agent } : {}),
+        ...(model ? { model } : {}),
+      });
 
-      cell.get().draft = '';
+      current.draft = '';
+      forceStatus(sessionId, 'busy');
+      toast('success', 'Prompt sent.');
       reporter.setBanner(null);
+      await loaders.messages(sessionId).catch(() => {
+        // The stream fills the turn in; the next open reads it again.
+      });
     } catch (failure) {
       reporter.fail('The prompt did not go through', failure);
     } finally {
@@ -243,16 +308,74 @@ export const createActions = (deps: {
     }
   };
 
-  const interrupt = async (): Promise<void> => {
+  const stop = async (): Promise<void> => {
     const state = cell.get();
-    if (!state.sandboxId || !state.conversationId || state.busy) return;
+    if (!state.sandboxId || !state.sessionId || state.busy) return;
+
+    const sandboxId = state.sandboxId;
+    const sessionId = state.sessionId;
     cell.patch({ busy: true });
     try {
-      await client.interrupt({ sandbox: state.sandboxId, conversation: state.conversationId });
-      toast('success', 'Interrupted.');
-      await refreshAfterAction();
+      await client.abort({ sandbox: sandboxId, session: sessionId });
+      toast('success', 'Stopped.');
+      forceStatus(sessionId, 'idle');
+      await loaders.messages(sessionId).catch(() => {});
     } catch (failure) {
-      reporter.fail('Could not interrupt', failure);
+      reporter.fail('Could not stop the turn', failure);
+    } finally {
+      cell.patch({ busy: false });
+    }
+  };
+
+  const respondPermission = async (
+    requestId: string,
+    decision: OpencodePermissionDecision,
+  ): Promise<void> => {
+    const state = cell.get();
+    if (!state.sandboxId || !state.sessionId || state.busy) return;
+
+    const { sandboxId, sessionId } = state;
+    cell.patch({ busy: true });
+    try {
+      await client.permission({
+        sandbox: sandboxId,
+        session: sessionId,
+        request: requestId,
+        decision,
+      });
+      const chat = cell.get().chat;
+      if (chat) cell.patch({ chat: withoutPermission(chat, requestId) });
+      toast('success', decision === 'reject' ? 'Request rejected.' : 'Permission allowed.');
+    } catch (failure) {
+      reporter.fail('That permission did not go through', failure);
+      void loaders.messages().catch(() => {});
+    } finally {
+      cell.patch({ busy: false });
+    }
+  };
+
+  const respondQuestion = async (
+    questionId: string,
+    answer: Record<string, OpencodeQuestionAnswer>,
+  ): Promise<void> => {
+    const state = cell.get();
+    if (!state.sandboxId || !state.sessionId || state.busy) return;
+
+    const { sandboxId, sessionId } = state;
+    cell.patch({ busy: true });
+    try {
+      await client.question({
+        sandbox: sandboxId,
+        session: sessionId,
+        question: questionId,
+        answer,
+      });
+      const chat = cell.get().chat;
+      if (chat) cell.patch({ chat: withoutQuestion(chat, questionId) });
+      toast('success', 'Answered.');
+    } catch (failure) {
+      reporter.fail('That answer did not go through', failure);
+      void loaders.messages().catch(() => {});
     } finally {
       cell.patch({ busy: false });
     }
@@ -262,6 +385,7 @@ export const createActions = (deps: {
     const state = cell.get();
     const target = sandboxId ?? state.sandboxId;
     if (!target || state.busy) return;
+
     cell.patch({ busy: true });
     if (action === 'opencode') toast('info', 'Starting OpenCode in the sandbox…');
     try {
@@ -274,13 +398,30 @@ export const createActions = (deps: {
       } else {
         toast('success', DONE_MESSAGES[action]);
         reporter.setBanner(null);
-        await refreshAfterAction();
+        await refreshAfterAction(action);
       }
     } catch (failure) {
       reporter.fail('That action did not go through', failure);
     } finally {
       cell.patch({ busy: false });
     }
+  };
+
+  const retrySessions = (): void => {
+    const state = cell.get();
+    if (state.tab !== 'sessions' || !state.sandboxId) return;
+    if (!talkable(state)) return;
+    if (state.sessions.length === 0 && !state.sessionsLoading) {
+      void loaders.sessions({ autoSelect: true }).catch((failure: unknown) => {
+        reporter.fail('Could not list sessions', failure);
+      });
+    }
+    if (!state.catalog) {
+      void loaders.catalog().catch(() => {
+        // The next open reads the catalogue again.
+      });
+    }
+    void loaders.retryLive();
   };
 
   return {
@@ -295,46 +436,50 @@ export const createActions = (deps: {
     },
     selectSandbox,
     openSandbox,
-    selectConversation: loaders.openConversation,
+    selectSession,
+    newSession,
+    setDirectoryFilter,
     setTab: (tab) => {
       cell.patch({ tab });
       savePreferences();
+      retrySessions();
     },
     setDraft: (text) => {
       cell.get().draft = text;
     },
-    setProvider: (provider) => {
+    setAgent: (agent) => {
       const state = cell.get();
-      if (!provider) return;
-      if (state.agents.length > 0 && !state.agents.some((agent) => agent.provider === provider)) return;
-      state.provider = provider;
-      state.model = '';
-      state.reasoning = '';
+      if (!agent || agent === state.agent) return;
+      state.agent = agent;
+      state.variant = null;
       cell.notify();
       savePreferences();
     },
-    setModel: (model) => {
-      cell.get().model = model;
-      cell.get().reasoning = '';
+    setModel: (key) => {
+      const ref: OpencodeModelRef | null = modelRefFromKey(key);
+      if (!ref) return;
+      const state = cell.get();
+      state.model = ref;
+      state.variant = null;
       cell.notify();
       saveModelSoon();
     },
-    setReasoning: (reasoning) => {
-      cell.get().reasoning = reasoning;
+    setVariant: (variant) => {
+      const state = cell.get();
+      state.variant = variant === 'default' ? null : variant;
       cell.notify();
       savePreferences();
     },
     submit,
-    interrupt,
+    stop,
+    respondPermission,
+    respondQuestion,
     runSandboxAction,
-    showConversationList: () => cell.patch({ compactList: true }),
-    refreshAgents: () => {
-      void loadAgents();
-    },
+    showSessionList: () => cell.patch({ compactList: true }),
     persistPreferences: () => {
-      if (modelTimer) {
-        clearTimeout(modelTimer);
-        modelTimer = null;
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
       }
       savePreferences();
     },

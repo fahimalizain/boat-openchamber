@@ -1,17 +1,23 @@
 /**
- * The last sandbox, agent, model, reasoning and tab per project, kept in device
- * storage when the host allows it and in memory otherwise.
+ * The last sandbox, OpenCode agent, model, reasoning variant and tab per
+ * project, kept in device storage when the host allows it and in memory
+ * otherwise.
  */
 import type { GuestStorageOptions, JsonValue } from '@openchamber/sdk';
 
 import { isRecord, readString } from '../shared/json.ts';
 import { isPanelTab, type PanelTab } from './tab.ts';
 
+export type ModelChoice = {
+  id: string;
+  providerID: string;
+};
+
 export type Preferences = {
   sandboxId: string | null;
-  provider: string | null;
-  model: string | null;
-  reasoning: string | null;
+  agent: string | null;
+  model: ModelChoice | null;
+  variant: string | null;
   tab: PanelTab | null;
 };
 
@@ -44,23 +50,30 @@ export const preferenceKey = (directory: string | null): string => (
   directory ? `boat.prefs.${slug(directory)}.${hash(directory)}` : 'boat.prefs.global'
 );
 
+const readModel = (value: unknown): ModelChoice | null => {
+  if (!isRecord(value)) return null;
+  const id = readString(value.id);
+  const providerID = readString(value.providerID);
+  return id && providerID ? { id, providerID } : null;
+};
+
 export const readPreferences = (value: unknown): Preferences | null => {
   if (!isRecord(value)) return null;
   const tab = readString(value.tab);
   return {
     sandboxId: readString(value.sandboxId),
-    provider: readString(value.provider),
-    model: readString(value.model),
-    reasoning: readString(value.reasoning),
+    agent: readString(value.agent),
+    model: readModel(value.model),
+    variant: readString(value.variant),
     tab: tab && isPanelTab(tab) ? tab : null,
   };
 };
 
 const serialize = (preferences: Preferences): JsonValue => ({
   sandboxId: preferences.sandboxId,
-  provider: preferences.provider,
-  model: preferences.model,
-  reasoning: preferences.reasoning,
+  agent: preferences.agent,
+  model: preferences.model ? { id: preferences.model.id, providerID: preferences.model.providerID } : null,
+  variant: preferences.variant,
   tab: preferences.tab,
 });
 

@@ -5920,8 +5920,14 @@ var remaining = (iso) => {
 var timeAgo = (iso) => {
   if (!iso)
     return "";
-  const milliseconds = Date.now() - Date.parse(iso);
-  if (!Number.isFinite(milliseconds) || milliseconds < 60000)
+  const at = Date.parse(iso);
+  return Number.isFinite(at) ? timeAgoAt(at) : "";
+};
+var timeAgoAt = (at) => {
+  if (!Number.isFinite(at) || at <= 0)
+    return "";
+  const milliseconds = Date.now() - at;
+  if (milliseconds < 60000)
     return "just now";
   const minutes = Math.floor(milliseconds / 60000);
   if (minutes < 60)

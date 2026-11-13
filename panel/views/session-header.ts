@@ -1,16 +1,16 @@
-/** The Conversations tab's small header: which sandbox, and a Resume when stopped. */
+/** The Sessions tab's small header: which sandbox, and a Resume when stopped. */
 import { mountBanner, mountSelect } from '@openchamber/sdk/ui';
 
 import { remaining } from '../../shared/time.ts';
 import { isStoppedState, isUpState } from '../../shared/types.ts';
 import type { PanelState } from '../store.ts';
 
-export type ConversationsHeaderView = { render: (state: PanelState) => void };
+export type SessionHeaderView = { render: (state: PanelState) => void };
 
-export const createConversationsHeader = (
+export const createSessionHeader = (
   roots: { select: HTMLElement; state: HTMLElement; banner: HTMLElement },
   handlers: { onSelect: (sandboxId: string) => void; onResume: () => void },
-): ConversationsHeaderView => {
+): SessionHeaderView => {
   const select = mountSelect(roots.select, {
     value: null,
     options: [],
@@ -22,7 +22,7 @@ export const createConversationsHeader = (
   mountBanner(roots.banner, {
     tone: 'warning',
     title: 'Sandbox stopped',
-    body: 'Resume it to talk to its agents.',
+    body: 'Resume it to talk to its OpenCode sessions.',
     action: { label: 'Resume', onClick: handlers.onResume },
   });
 

@@ -14,8 +14,15 @@ export const remaining = (iso: string | null): string => {
 
 export const timeAgo = (iso: string | null): string => {
   if (!iso) return '';
-  const milliseconds = Date.now() - Date.parse(iso);
-  if (!Number.isFinite(milliseconds) || milliseconds < 60_000) return 'just now';
+  const at = Date.parse(iso);
+  return Number.isFinite(at) ? timeAgoAt(at) : '';
+};
+
+/** The same reading for an epoch-millisecond stamp, as OpenCode reports times. */
+export const timeAgoAt = (at: number): string => {
+  if (!Number.isFinite(at) || at <= 0) return '';
+  const milliseconds = Date.now() - at;
+  if (milliseconds < 60_000) return 'just now';
   const minutes = Math.floor(milliseconds / 60_000);
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);

@@ -1,16 +1,33 @@
-/** What arrives from the service: live events, the running poll, and watch pings. */
-import { isUiEvent } from '../shared/events.ts';
-import { isRecord } from '../shared/json.ts';
+/** What arrives from the service: OpenCode event batches, the relay state, creates. */
+import { isRecord, readString } from '../shared/json.ts';
+import {
+  OPENCODE_EVENTS_TOPIC,
+  OPENCODE_STREAM_TOPIC,
+  type OpencodeStreamEvent,
+} from '../shared/opencode.ts';
+import { isUpState } from '../shared/types.ts';
 import type { ServiceClient } from './api.ts';
+import { applyChatEvent, applySessionEvent } from './chat-model.ts';
 import type { Loaders } from './data.ts';
 import type { Cell, Reporter } from './state.ts';
 
 export type Live = {
   handleServiceEvent: (topic: string, data: unknown) => void;
-  pollRunning: () => Promise<void>;
   pingWatch: () => void;
-  unwatchCurrent: () => void;
+  unwatchSandbox: () => void;
   refresh: () => Promise<void>;
+};
+
+const eventOf = (value: unknown): OpencodeStreamEvent | null => {
+  if (!isRecord(value) || typeof value.type !== 'string') return null;
+  return value as OpencodeStreamEvent;
+};
+
+const sessionOf = (event: OpencodeStreamEvent): string | null => {
+  if (event.type === 'session-created') return event.session.id;
+  if (event.type === 'permission') return event.request.sessionID;
+  if (event.type === 'question') return event.request.sessionID;
+  return event.sessionID;
 };
 
 export const createLive = (deps: {
@@ -21,15 +38,55 @@ export const createLive = (deps: {
   onCreate: (data: unknown) => void;
 }): Live => {
   const { cell, client, loaders, reporter } = deps;
-  let polling = false;
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const refreshAfterStreamEnd = async (): Promise<void> => {
-    try {
-      await loaders.conversations({ autoSelect: false });
-      if (cell.get().conversationId) await loaders.history();
-    } catch {
-      // The next open reads everything again.
+  const scheduleMessages = (): void => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      void loaders.messages().catch(() => {
+        // The next batch or the next open reads the session again.
+      });
+    }, 400);
+  };
+
+  const handleEvents = (events: unknown[]): void => {
+    const state = cell.get();
+    let sessions = state.sessions;
+    let chat = state.chat;
+    let sessionId = state.sessionId;
+    let changed = false;
+    let refetch = false;
+
+    for (const raw of events) {
+      const event = eventOf(raw);
+      if (!event) continue;
+
+      const nextSessions = applySessionEvent(sessions, event);
+      if (nextSessions !== sessions) {
+        sessions = nextSessions;
+        changed = true;
+      }
+
+      if (chat) {
+        const nextChat = applyChatEvent(chat, event);
+        if (nextChat !== chat) {
+          chat = nextChat;
+          changed = true;
+        }
+      }
+
+      const target = sessionOf(event);
+      if (event.type === 'message-changed' && target === sessionId) refetch = true;
+      if (event.type === 'session-deleted' && target === sessionId) {
+        sessionId = null;
+        chat = null;
+        changed = true;
+      }
     }
+
+    if (changed) cell.patch({ sessions, chat, sessionId });
+    if (refetch) scheduleMessages();
   };
 
   const handleServiceEvent = (topic: string, data: unknown): void => {
@@ -38,82 +95,63 @@ export const createLive = (deps: {
       return;
     }
     if (!isRecord(data)) return;
-    const state = cell.get();
-    const sandbox = typeof data.sandbox === 'string' ? data.sandbox : '';
-    const conversation = typeof data.conversation === 'string' ? data.conversation : '';
-    if (sandbox !== state.sandboxId || conversation !== state.conversationId) return;
 
-    if (topic === 'boat:events') {
-      const incoming = Array.isArray(data.events) ? data.events : [];
-      let changed = false;
-      for (const entry of incoming) {
-        if (!isUiEvent(entry)) continue;
-        state.events.set(entry.id, entry);
-        changed = true;
-      }
-      if (changed) cell.notify();
+    const state = cell.get();
+    const sandbox = readString(data.sandbox);
+    if (sandbox !== state.sandboxId) return;
+
+    if (topic === OPENCODE_EVENTS_TOPIC) {
+      handleEvents(Array.isArray(data.events) ? data.events : []);
       return;
     }
+    if (topic !== OPENCODE_STREAM_TOPIC) return;
 
-    if (topic !== 'boat:stream') return;
-    const streamState = typeof data.state === 'string' ? data.state : '';
+    const streamState = readString(data.state);
     if (streamState === 'live') {
-      cell.patch({ live: true, watchBroken: false });
+      if (!state.live || state.watchBroken) cell.patch({ live: true, watchBroken: false });
       return;
     }
     if (streamState !== 'ended' && streamState !== 'error') return;
 
-    cell.patch({ watchBroken: true, live: false });
-    if (typeof data.message === 'string' && data.message) {
-      reporter.setBanner({ tone: 'warning', title: 'Live updates stopped', body: data.message });
-    }
-    if (streamState === 'ended') void refreshAfterStreamEnd();
-  };
-
-  const pollRunning = async (): Promise<void> => {
-    const state = cell.get();
-    if (polling || state.busy) return;
-    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-    if (!state.running || !state.sandboxId || !state.conversationId) return;
-
-    polling = true;
-    try {
-      const data = await client.conversations(state.sandboxId);
-      const current = cell.get();
-      if (!current.sandboxId || !current.conversationId) return;
-      current.conversations = data.conversations;
-      current.running = data.conversations.find((entry) => entry.id === current.conversationId)?.running ?? false;
-      await loaders.history();
-      cell.notify();
-    } catch {
-      // A banner already covers a service that is down.
-    } finally {
-      polling = false;
+    cell.patch({ live: false, watchBroken: true });
+    const message = readString(data.message);
+    if (message) reporter.setBanner({ tone: 'warning', title: 'Live updates stopped', body: message });
+    if (streamState === 'ended') {
+      void loaders.refreshAll().catch(() => {
+        // Another open reads everything again.
+      });
     }
   };
 
   const pingWatch = (): void => {
     const state = cell.get();
-    if (!state.sandboxId || !state.conversationId || state.watchBroken) return;
-    void client.watch(state.sandboxId, state.conversationId).catch(() => {
-      cell.patch({ watchBroken: true, live: false });
+    if (!state.sandboxId || state.watchBroken) return;
+    const sandbox = state.sandboxes.find((entry) => entry.id === state.sandboxId) ?? null;
+    if (!sandbox || !isUpState(sandbox.state)) return;
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    void client.watch(state.sandboxId).catch(() => {
+      cell.patch({ live: false, watchBroken: true });
     });
   };
 
-  const unwatchCurrent = (): void => {
-    const state = cell.get();
-    if (!state.sandboxId || !state.conversationId) return;
-    void client.unwatch(state.sandboxId, state.conversationId).catch(() => {});
+  const unwatchSandbox = (): void => {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
+    }
+    const sandboxId = cell.get().sandboxId;
+    if (!sandboxId) return;
+    void client.unwatch(sandboxId).catch(() => {});
   };
 
   const refresh = async (): Promise<void> => {
     try {
-      await loaders.conversations({ autoSelect: false });
-      if (cell.get().conversationId) await loaders.history();
+      await loaders.refreshAll();
+      await loaders.retryLive();
     } catch {
       // Quiet: this runs when the panel becomes visible again.
     }
   };
 
-  return { handleServiceEvent, pollRunning, pingWatch, unwatchCurrent, refresh };
+  return { handleServiceEvent, pingWatch, unwatchSandbox, refresh };
 };

@@ -17,16 +17,29 @@ test('preference keys are stable, short and distinct per folder', () => {
 
 test('stored values are read defensively', () => {
   assert.deepEqual(
-    readPreferences({ sandboxId: 'bx_7ppmwt9v', provider: 'claude', model: 'sonnet', reasoning: 'high', tab: 'conversations' }),
-    { sandboxId: 'bx_7ppmwt9v', provider: 'claude', model: 'sonnet', reasoning: 'high', tab: 'conversations' },
+    readPreferences({
+      sandboxId: 'bx_7ppmwt9v',
+      agent: 'build',
+      model: { id: 'big', providerID: 'acme' },
+      variant: 'high',
+      tab: 'sessions',
+    }),
+    {
+      sandboxId: 'bx_7ppmwt9v',
+      agent: 'build',
+      model: { id: 'big', providerID: 'acme' },
+      variant: 'high',
+      tab: 'sessions',
+    },
   );
   assert.deepEqual(readPreferences({ sandboxId: 42 }), {
     sandboxId: null,
-    provider: null,
+    agent: null,
     model: null,
-    reasoning: null,
+    variant: null,
     tab: null,
   });
+  assert.equal(readPreferences({ model: { id: 'big' } })?.model, null);
   assert.equal(readPreferences({ tab: 'settings' })?.tab, null);
   assert.equal(readPreferences('nope'), null);
 });
@@ -35,10 +48,10 @@ test('without device storage the preferences live in memory', async () => {
   const store = createPreferences({ storage: null, device: false });
   const wanted = {
     sandboxId: 'bx_7ppmwt9v',
-    provider: 'claude',
-    model: 'sonnet',
-    reasoning: 'high',
-    tab: 'conversations' as const,
+    agent: 'build',
+    model: { id: 'big', providerID: 'acme' },
+    variant: 'high',
+    tab: 'sessions' as const,
   };
 
   assert.equal(await store.get('/repo'), null);
@@ -58,9 +71,41 @@ test('a host that refuses device storage falls back to memory', async () => {
     },
   };
   const store = createPreferences({ storage, device: true });
-  const wanted = { sandboxId: null, provider: 'codex', model: '', reasoning: null, tab: null };
+  const wanted = {
+    sandboxId: null,
+    agent: null,
+    model: null,
+    variant: null,
+    tab: null,
+  };
 
   await store.save('/repo', wanted);
   assert.equal(sets, 1);
   assert.deepEqual(await store.get('/repo'), wanted);
+});
+
+test('device storage receives a JSON-safe model pair', async () => {
+  let saved: JsonValue | undefined;
+  const storage = {
+    get: async (): Promise<JsonValue | undefined> => saved,
+    set: async (_key: string, value: JsonValue): Promise<void> => {
+      saved = value;
+    },
+  };
+  const store = createPreferences({ storage, device: true });
+  await store.save('/repo', {
+    sandboxId: 'bx_7ppmwt9v',
+    agent: 'build',
+    model: { id: 'big', providerID: 'acme' },
+    variant: 'high',
+    tab: 'sessions',
+  });
+
+  assert.deepEqual(saved, {
+    sandboxId: 'bx_7ppmwt9v',
+    agent: 'build',
+    model: { id: 'big', providerID: 'acme' },
+    variant: 'high',
+    tab: 'sessions',
+  });
 });

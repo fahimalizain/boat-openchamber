@@ -8,11 +8,12 @@ import { createPreferences } from './preferences.ts';
 import { createStore } from './store.ts';
 import { createBannerView } from './views/banner.ts';
 import { createComposer } from './views/composer.ts';
-import { createConversationList } from './views/conversation-list.ts';
-import { createConversationView } from './views/conversation-view.ts';
-import { createConversationsHeader } from './views/conversations-header.ts';
 import { createCreateForm } from './views/create-form.ts';
 import { createSandboxListView } from './views/sandbox-list.ts';
+import { createSessionBar } from './views/session-bar.ts';
+import { createSessionHeader } from './views/session-header.ts';
+import { createSessionList } from './views/session-list.ts';
+import { createSessionView } from './views/session-view.ts';
 import { createTabsView } from './views/tabs.ts';
 
 type Host = ReturnType<typeof connectHost>;
@@ -50,7 +51,7 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
   const banner = createBannerView(byId('banner-inner'), byId('banner'));
 
   const tabs = createTabsView(
-    { tabs: byId('tabs'), sandboxes: byId('sandboxes-tab'), conversations: byId('conversations-tab') },
+    { tabs: byId('tabs'), sandboxes: byId('sandboxes-tab'), sessions: byId('sessions-tab') },
     { onSelect: store.setTab },
   );
 
@@ -65,11 +66,11 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
     },
   });
 
-  const conversationsHeader = createConversationsHeader(
+  const sessionHeader = createSessionHeader(
     {
-      select: byId('conv-sandbox-select'),
-      state: byId('conv-sandbox-state'),
-      banner: byId('conv-resume'),
+      select: byId('session-sandbox-select'),
+      state: byId('session-sandbox-state'),
+      banner: byId('session-resume'),
     },
     {
       onSelect: (sandboxId) => {
@@ -81,52 +82,66 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
     },
   );
 
-  const list = createConversationList(
-    { list: byId('conversation-list'), newButton: byId('new-conversation') },
+  const sessionList = createSessionList(
+    { list: byId('session-list'), newButton: byId('new-session'), directory: byId('session-directory') },
     {
-      onSelect: (conversationId) => {
-        void store.selectConversation(conversationId);
+      onSelect: (sessionId) => {
+        void store.selectSession(sessionId);
       },
       onNew: () => {
-        void store.selectConversation(null);
+        void store.newSession();
+      },
+      onDirectory: (directory) => {
+        void store.setDirectoryFilter(directory);
       },
     },
   );
 
-  const conversation = createConversationView(
+  const sessionBar = createSessionBar(byId('session-bar'));
+
+  const sessionView = createSessionView(
     {
+      wrap: byId('chat-wrap'),
       chat: byId('chat'),
+      log: byId('chat-log'),
+      requests: byId('chat-requests'),
       empty: byId('chat-empty'),
-      status: byId('chat-status'),
-      live: byId('live'),
     },
     {
+      onOpenUrl: (url) => {
+        void host.openUrl(url);
+      },
+      onPermission: (requestId, decision) => {
+        void store.respondPermission(requestId, decision);
+      },
+      onQuestion: (questionId, answer) => {
+        void store.respondQuestion(questionId, answer);
+      },
       onNew: () => {
-        void store.selectConversation(null);
+        void store.newSession();
       },
     },
   );
 
   const composer = createComposer(
     {
-      hint: byId('composer-hint'),
-      providerRow: byId('provider-row'),
-      provider: byId('provider-select'),
+      root: byId('composer'),
+      agent: byId('agent-select'),
       model: byId('model-select'),
-      reasoning: byId('reasoning-select'),
+      variant: byId('variant-select'),
       field: byId('composer-field'),
       actions: byId('composer-actions'),
     },
     {
       onDraft: (text) => store.setDraft(text),
-      onProvider: (provider) => store.setProvider(provider),
+      onAgent: (agent) => store.setAgent(agent),
       onModel: (model) => store.setModel(model),
-      onReasoning: (reasoning) => store.setReasoning(reasoning),
+      onVariant: (variant) => store.setVariant(variant),
       onSubmit: () => {
         void store.submit();
       },
-      onInterrupt: () => {
-        void store.interrupt();
+      onStop: () => {
+        void store.stop();
       },
     },
   );
@@ -168,36 +183,33 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
     banner.render(state.banner);
     tabs.render(state);
     sandboxList.render(state);
-    conversationsHeader.render(state);
-    list.render(state);
-    conversation.render(state);
+    sessionHeader.render(state);
+    sessionList.render(state);
+    sessionBar.render(state);
+    sessionView.render(state);
     composer.render(state);
     createForm.render(state);
   };
   store.subscribe(render);
 
   buttonSlot(byId('compact-back'), {
-    label: '← Back',
+    label: '← Sessions',
     size: 'sm',
     variant: 'ghost',
-    onClick: store.showConversationList,
+    onClick: store.showSessionList,
   });
 
   host.onServiceEvent(({ topic, data }) => store.handleServiceEvent(topic, data));
 
-  window.setInterval(() => store.pingWatch(), 20_000);
-  window.setInterval(() => {
-    void store.pollRunning();
-  }, 4_000);
+  window.setInterval(() => store.pingWatch(), 30_000);
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     void store.refresh();
-    store.refreshAgents();
     void syncProjects();
   });
   window.addEventListener('pagehide', () => {
-    store.unwatchCurrent();
+    store.unwatchSandbox();
     store.persistPreferences();
   });
 

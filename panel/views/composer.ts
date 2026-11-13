@@ -1,7 +1,8 @@
-/** The composer's agent, model and reasoning selects, and the message row. */
+/** The composer: agent, model and reasoning picks, the textarea, Send and Stop. */
 import { mountSelect, mountTextField } from '@openchamber/sdk/ui';
 
-import { modelsOf, reasoningOf, sortAgents } from '../agents.ts';
+import { isStoppedState } from '../../shared/types.ts';
+import { agentChoices, groupModels, modelChoices, modelKey, variantsOf } from '../catalog.ts';
 import { buttonSlot } from '../kit.ts';
 import type { PanelState } from '../store.ts';
 
@@ -9,129 +10,137 @@ export type Composer = { render: (state: PanelState) => void };
 
 export const createComposer = (
   roots: {
-    hint: HTMLElement;
-    providerRow: HTMLElement;
-    provider: HTMLElement;
+    root: HTMLElement;
+    agent: HTMLElement;
     model: HTMLElement;
-    reasoning: HTMLElement;
+    variant: HTMLElement;
     field: HTMLElement;
     actions: HTMLElement;
   },
   handlers: {
     onDraft: (text: string) => void;
-    onProvider: (provider: string) => void;
-    onModel: (model: string) => void;
-    onReasoning: (reasoning: string) => void;
+    onAgent: (agent: string) => void;
+    onModel: (key: string) => void;
+    onVariant: (variant: string) => void;
     onSubmit: () => void;
-    onInterrupt: () => void;
+    onStop: () => void;
   },
 ): Composer => {
-  const provider = mountSelect(roots.provider, {
+  const agent = mountSelect(roots.agent, {
     label: 'Agent',
-    value: 'claude',
+    value: null,
     options: [],
-    onChange: handlers.onProvider,
+    placeholder: 'Default agent',
+    onChange: handlers.onAgent,
   });
 
   const model = mountSelect(roots.model, {
     label: 'Model',
-    value: '',
-    options: [{ id: '', label: 'Default' }],
+    value: null,
+    options: [],
+    placeholder: 'Default model',
+    searchable: true,
     onChange: handlers.onModel,
   });
 
-  const reasoning = mountSelect(roots.reasoning, {
+  const variant = mountSelect(roots.variant, {
     label: 'Reasoning',
-    value: '',
-    options: [{ id: '', label: 'Default' }],
-    onChange: handlers.onReasoning,
+    value: 'default',
+    options: [{ id: 'default', label: 'Default' }],
+    onChange: handlers.onVariant,
   });
 
   const field = mountTextField(roots.field, {
     value: '',
     multiline: true,
-    rows: 3,
-    placeholder: 'Ask the sandbox agent…',
-    onChange: handlers.onDraft,
+    rows: 2,
+    placeholder: 'Ask OpenCode…',
+    onChange: (text) => {
+      localDraft = text;
+      handlers.onDraft(text);
+      paintActions();
+    },
   });
 
-  // Send sits at the right edge, so Interrupt is mounted first.
-  const interrupt = buttonSlot(roots.actions, {
-    label: 'Interrupt',
-    size: 'sm',
+  // Send sits at the right edge, so Stop is mounted first.
+  const stop = buttonSlot(roots.actions, {
+    label: 'Stop',
+    size: 'xs',
     variant: 'outline',
-    onClick: handlers.onInterrupt,
+    onClick: handlers.onStop,
   });
   const send = buttonSlot(roots.actions, {
     label: 'Send',
-    size: 'sm',
+    size: 'xs',
     onClick: handlers.onSubmit,
   });
 
+  let lastState: PanelState | null = null;
+  let localDraft = '';
+
+  const paintActions = (): void => {
+    if (!lastState) return;
+    const turning = lastState.chat?.session.status === 'busy';
+    const canSend = Boolean(lastState.sandboxId)
+      && localDraft.trim().length > 0
+      && !lastState.busy
+      && !turning;
+    send.slot.hidden = turning;
+    send.handle.update({ disabled: !canSend });
+    stop.slot.hidden = !turning;
+    stop.handle.update({ disabled: lastState.busy });
+  };
+
+  const textarea = roots.field.querySelector('textarea');
+  textarea?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    if (!lastState || lastState.busy) return;
+    if (lastState.chat?.session.status === 'busy') return;
+    event.preventDefault();
+    handlers.onSubmit();
+  });
+
   const render = (state: PanelState): void => {
-    const open = Boolean(state.conversationId);
-    const running = open && state.running;
-    const busy = state.busy;
+    lastState = state;
+    const sandbox = state.sandboxes.find((entry) => entry.id === state.sandboxId) ?? null;
+    const stopped = sandbox !== null && isStoppedState(sandbox.state);
 
-    roots.providerRow.hidden = open;
-    const hint = !state.sandboxId
-      ? 'Create a sandbox with `boat new` to start.'
-      : open
-        ? running ? 'Steer the running turn' : 'Reply'
-        : '';
-    roots.hint.textContent = hint;
-    roots.hint.hidden = hint === '';
+    roots.root.hidden = !state.sandboxId || stopped;
+    if (roots.root.hidden) return;
 
-    if (!open) {
-      const agents = sortAgents(state.agents);
-      provider.update({
-        value: state.provider,
-        options: agents.map((agent) => ({
-          id: agent.provider,
-          label: agent.available ? agent.label : `${agent.label} (not set up)`,
-        })),
-        disabled: busy || agents.length === 0,
-      });
+    const turning = state.chat?.session.status === 'busy';
+    const locked = state.busy || turning;
+    localDraft = state.draft;
 
-      const models = modelsOf(state.agents, state.provider);
-      model.update({
-        value: state.model,
-        options: [
-          { id: '', label: 'Default' },
-          ...models.map((entry) => ({
-            id: entry.id,
-            label: entry.available ? entry.label : `${entry.label} (not set up)`,
-          })),
-        ],
-        disabled: busy,
-      });
+    const agents = agentChoices(state.catalog);
+    agent.update({
+      value: state.agent || null,
+      options: agents.map((entry) => ({ id: entry.id, label: entry.label })),
+      disabled: locked || agents.length === 0,
+    });
 
-      const levels = reasoningOf(state.agents, state.provider, state.model);
-      roots.reasoning.hidden = !levels || levels.supported.length === 0;
-      if (levels) {
-        reasoning.update({
-          value: levels.supported.includes(state.reasoning) ? state.reasoning : '',
-          options: [
-            { id: '', label: 'Default' },
-            ...levels.supported.map((level) => ({ id: level, label: level })),
-          ],
-          disabled: busy,
-        });
-      }
-    }
+    const models = state.catalog?.models ?? [];
+    const choices = modelChoices(groupModels(models));
+    model.update({
+      value: state.model ? modelKey(state.model) : null,
+      options: choices,
+      disabled: locked || choices.length === 0,
+    });
 
-    send.handle.update({ label: running ? 'Steer' : 'Send', disabled: busy });
-    interrupt.slot.hidden = !running;
-    interrupt.handle.update({ disabled: busy });
+    const levels = variantsOf(models, state.model);
+    roots.variant.hidden = levels.length === 0;
+    variant.update({
+      value: state.variant ?? 'default',
+      options: [{ id: 'default', label: 'Default' }, ...levels.map((level) => ({ id: level, label: level }))],
+      disabled: locked,
+    });
+
     field.update({
       value: state.draft,
-      disabled: busy || !state.sandboxId,
-      placeholder: running
-        ? 'Add to the running turn…'
-        : open
-          ? 'Continue this conversation…'
-          : 'Ask the sandbox agent…',
+      disabled: locked,
+      placeholder: turning ? 'OpenCode is working…' : state.sessionId ? 'Reply, or ask for a change…' : 'Ask OpenCode…',
     });
+    paintActions();
   };
 
   return { render };
