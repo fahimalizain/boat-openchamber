@@ -10,7 +10,7 @@ import { describeFailure } from '../failures.ts';
 import { route, type Route } from '../router.ts';
 import { isSandboxId } from '../validation.ts';
 
-type Deps = Pick<ServiceContext, 'sandboxes' | 'scoper' | 'desktop' | 'perform' | 'refresh' | 'forget'>;
+type Deps = Pick<ServiceContext, 'sandboxes' | 'scoper' | 'projects' | 'desktop' | 'perform' | 'refresh' | 'forget'>;
 
 const summaryOf = (sandbox: Sandbox): SandboxSummary => ({
   id: sandbox.id,
@@ -32,8 +32,11 @@ const isLifecycleAction = (action: SandboxAction): action is 'stop' | 'resume' |
 
 export const sandboxRoutes = (deps: Deps): Route[] => [
   route('GET', '/sandboxes', async (context) => {
+    const directory = context.search.get('directory');
+    if (directory) deps.projects.remember([directory]);
+
     const snapshot = await deps.sandboxes.get();
-    const scope = await deps.scoper.apply(snapshot.sandboxes, context.search.get('directory'));
+    const scope = await deps.scoper.apply(snapshot.sandboxes, directory);
     const ordered = [...scope.entries].sort(
       (left, right) => Number(right.inProject) - Number(left.inProject),
     );

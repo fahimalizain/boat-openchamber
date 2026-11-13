@@ -14,6 +14,7 @@ import type {
   SandboxesResponse,
   SteerRequest,
   WatchRequest,
+  ProjectsRequest,
 } from '../shared/routes.ts';
 
 export type HostRequester = {
@@ -36,6 +37,7 @@ export type ServiceClient = {
   action: (request: ActionRequest) => Promise<ActionResponse>;
   createOptions: (directory: string | null) => Promise<CreateOptionsResponse>;
   create: (request: CreateSandboxRequest) => Promise<CreateSandboxResponse>;
+  rememberProjects: (directories: string[]) => Promise<OkBody>;
 };
 
 const query = (values: Record<string, string>): string => `?${new URLSearchParams(values).toString()}`;
@@ -91,5 +93,8 @@ export const createServiceClient = (host: HostRequester): ServiceClient => {
       directory ? `/create-options${query({ directory })}` : '/create-options',
     ),
     create: (request) => call('POST', '/create', request),
+    rememberProjects: (directories) => call('POST', '/projects', {
+      directories,
+    } satisfies ProjectsRequest),
   };
 };

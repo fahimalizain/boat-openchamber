@@ -60,6 +60,7 @@ function installGuestScrollbarActivity(doc) {
 }
 var GUEST_SCROLLBAR_SCRIPT = `(${installGuestScrollbarActivity.toString()})(document);`;
 // node_modules/@openchamber/sdk/dist/manifest.js
+var GUEST_PROVIDER_LOGO_BYTES_MAX = 1024 * 1024;
 var TRACKER_URL_TOKENS = ["{id}", "{segment}", "{segments+}"];
 var TRACKER_URL_TOKEN_SET = new Set(TRACKER_URL_TOKENS);
 // node_modules/@openchamber/sdk/dist/session-events.js
@@ -78,6 +79,7 @@ var EVENT_TYPES = new Set(GUEST_SESSION_EVENT_TYPES);
 // node_modules/@openchamber/sdk/dist/service-host.js
 var SERVICE_HOST_PATH = "/service/call";
 var OPENCHAMBER_HOST_CALLBACK_URL_ENV = "OPENCHAMBER_HOST_CALLBACK_URL";
+var SERVICE_MARK_TEXT_MAX = 200;
 var SERVICE_HOST_TIMEOUT_MS = 30000;
 var SERVICE_SCHEDULE_WIRE_VERSION = 1;
 var SERVICE_SCHEDULE_IDLE_MS = 10 * 60000;
@@ -150,7 +152,8 @@ var createServiceHost = ({ env }) => {
     setInstructions: (directory, text) => call("instructions.set", { directory, text }),
     emit: (topic, data) => call("panels.emit", { topic, data }),
     readSettings: () => call("settings.read", {}).then(({ settings }) => settings),
-    needsConfiguration: (message) => call("status.set", { needsConfiguration: message })
+    needsConfiguration: (message) => call("status.set", { needsConfiguration: message }),
+    setMark: (target, mark) => call("marks.set", { target, mark })
   };
 };
 // node_modules/@openchamber/sdk/dist/file-editor.js
@@ -697,6 +700,61 @@ var createPlanNote = (options) => {
   };
 };
 
+// service/data/project-registry.ts
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname, isAbsolute, join as join2 } from "node:path";
+var MAX_PROJECTS = 24;
+var DEFAULT_FILE = join2(homedir2(), ".boat-openchamber", "projects.json");
+var usable = (directory) => typeof directory === "string" && isAbsolute(directory) && !directory.includes("\x00") && directory.length <= 1024;
+var read = (file) => {
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8"));
+    if (!isRecord(parsed) || !Array.isArray(parsed.directories))
+      return [];
+    return parsed.directories.filter(usable).slice(0, MAX_PROJECTS);
+  } catch {
+    return [];
+  }
+};
+var createProjectRegistry = (options = {}) => {
+  const file = options.file ?? DEFAULT_FILE;
+  const directories = new Set(read(file));
+  const save = () => {
+    try {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify({ directories: [...directories] }, null, 2));
+    } catch {}
+  };
+  return {
+    list: () => [...directories],
+    remember: (incoming) => {
+      let changed = false;
+      for (const directory of incoming) {
+        if (!usable(directory) || directories.has(directory))
+          continue;
+        if (directories.size >= MAX_PROJECTS)
+          break;
+        directories.add(directory);
+        changed = true;
+      }
+      if (changed)
+        save();
+    },
+    replace: (incoming) => {
+      const next = [...new Set(incoming.filter(usable))].slice(0, MAX_PROJECTS);
+      const unchanged = next.length === directories.size && next.every((directory) => directories.has(directory));
+      if (unchanged)
+        return false;
+      directories.clear();
+      for (const directory of next)
+        directories.add(directory);
+      save();
+      return true;
+    }
+  };
+};
+
 // service/data/running-agents.ts
 var createRunningAgents = (options) => {
   const running = new Set;
@@ -1206,7 +1264,7 @@ var buildProjectInstructions = (projectName, sandboxes, now) => {
 };
 
 // service/instructions.ts
-var MAX_PROJECTS = 8;
+var MAX_PROJECTS2 = 8;
 var createInstructionsWriter = (options) => {
   let globalSent = null;
   let globalRetryAt = 0;
@@ -1215,7 +1273,7 @@ var createInstructionsWriter = (options) => {
   const rememberProject = (directory, text) => {
     projectSent.delete(directory);
     projectSent.set(directory, text);
-    if (projectSent.size <= MAX_PROJECTS)
+    if (projectSent.size <= MAX_PROJECTS2)
       return;
     const oldest = projectSent.keys().next().value;
     if (oldest)
@@ -1245,6 +1303,104 @@ var createInstructionsWriter = (options) => {
       } catch {
         projectRetryAt.set(directory, Date.now() + options.retryMs);
       }
+    }
+  };
+};
+
+// service/marks/mark.ts
+var buildProjectMark = (sandboxes, agents) => {
+  if (sandboxes.length === 0)
+    return null;
+  const running = sandboxes.filter((sandbox) => agents.has(sandbox.id)).length;
+  const up = sandboxes.some((sandbox) => isUpState(sandbox.state));
+  const text = [
+    `${sandboxes.length} sandbox${sandboxes.length === 1 ? "" : "es"}`,
+    running > 0 ? `${running} agent${running === 1 ? "" : "s"} running` : null
+  ].filter(Boolean).join(" · ");
+  return {
+    icon: "anchor",
+    tone: up || running > 0 ? "success" : "info",
+    text: clip(text, SERVICE_MARK_TEXT_MAX)
+  };
+};
+var sameMark = (left, right) => left === right || left !== null && right !== null && left.icon === right.icon && left.tone === right.tone && left.text === right.text;
+var changedMarks = (previous, next) => {
+  const changes = [];
+  for (const [directory, mark] of next) {
+    if (!sameMark(previous.get(directory) ?? null, mark))
+      changes.push({ directory, mark });
+  }
+  for (const directory of previous.keys()) {
+    if (!next.has(directory))
+      changes.push({ directory, mark: null });
+  }
+  return changes;
+};
+
+// service/marks/marker.ts
+var RATE_WINDOW_MS = 60000;
+var RATE_MAX = 50;
+var BACKOFF_MS = 60000;
+var isRateLimited = (failure) => {
+  if (typeof failure === "object" && failure !== null && "status" in failure) {
+    if (failure.status === 429)
+      return true;
+  }
+  const message = failure instanceof Error ? failure.message : "";
+  return /429|rate limit|too many requests/i.test(message);
+};
+var createMarker = (deps) => {
+  const previous = new Map;
+  const calls = [];
+  const now = deps.now ?? Date.now;
+  let syncing = false;
+  let cooldownUntil = 0;
+  const withinRate = (at) => {
+    while (calls.length > 0 && at - (calls[0] ?? 0) > RATE_WINDOW_MS)
+      calls.shift();
+    return calls.length < RATE_MAX;
+  };
+  const run = async (snapshot) => {
+    if (now() < cooldownUntil)
+      return;
+    const next = new Map;
+    for (const directory of deps.projects.list()) {
+      try {
+        const scope = await deps.scoper.apply(snapshot.sandboxes, directory);
+        const sandboxes = scope.entries.filter((entry) => entry.inProject).map((entry) => entry.sandbox);
+        next.set(directory, buildProjectMark(sandboxes, deps.agents.all()));
+      } catch {
+        const current = previous.get(directory);
+        if (current !== undefined)
+          next.set(directory, current);
+      }
+    }
+    for (const change of changedMarks(previous, next)) {
+      if (!withinRate(now()))
+        return;
+      try {
+        await deps.setMark({ directory: change.directory }, change.mark);
+        calls.push(now());
+        if (change.mark)
+          previous.set(change.directory, change.mark);
+        else
+          previous.delete(change.directory);
+      } catch (failure) {
+        if (isRateLimited(failure)) {
+          cooldownUntil = now() + BACKOFF_MS;
+          return;
+        }
+      }
+    }
+  };
+  return {
+    sync: (snapshot) => {
+      if (syncing)
+        return;
+      syncing = true;
+      run(snapshot).finally(() => {
+        syncing = false;
+      });
     }
   };
 };
@@ -1314,7 +1470,7 @@ var createRemoteCache = (options) => {
 };
 
 // service/project/scope.ts
-import { isAbsolute } from "node:path";
+import { isAbsolute as isAbsolute2 } from "node:path";
 
 // service/project/matcher.ts
 var PROJECT_LABEL_KEY = "openchamber.project";
@@ -1362,7 +1518,7 @@ var chooseEnvironment = (environments, scope) => {
 };
 
 // service/project/scope.ts
-var usableDirectory = (directory) => directory && isAbsolute(directory) && !directory.includes("\x00") ? directory : null;
+var usableDirectory = (directory) => directory && isAbsolute2(directory) && !directory.includes("\x00") ? directory : null;
 var createScoper = (deps) => ({
   apply: async (sandboxes, directory) => {
     const project = usableDirectory(directory);
@@ -1617,6 +1773,7 @@ var createWarmer = (options) => (snapshot) => {
   options.agents.sweep(valid);
   options.conversations.sweep(valid);
   options.planNote.refresh();
+  options.marker.sync(snapshot);
   options.instructions.sync(snapshot);
 };
 
@@ -1641,16 +1798,20 @@ var createServiceContext = (host) => {
     setInstructions: host.setInstructions,
     retryMs: TTL.instructionsRetry
   });
-  const sandboxes = createSandboxList({
-    ttlMs: TTL.sandboxes,
-    load: listSandboxes,
-    onSnapshot: createWarmer({ conversations, desktop, agents, planNote, instructions })
-  });
-  const followers = createFollowers({ sink: host.emit, ...FOLLOWERS });
   const environments = createEnvironmentList({ ttlMs: TTL.environments, load: listEnvironments });
   const remotes = createRemoteCache({ ttlMs: TTL.remotes });
   const ranking = createProjectRanking();
   const scoper = createScoper({ environments, remotes, ranking });
+  const projects = createProjectRegistry({
+    file: process.env.BOAT_PROJECTS_FILE?.trim() || undefined
+  });
+  const marker = createMarker({ projects, scoper, agents, setMark: host.setMark });
+  const sandboxes = createSandboxList({
+    ttlMs: TTL.sandboxes,
+    load: listSandboxes,
+    onSnapshot: createWarmer({ conversations, desktop, agents, planNote, instructions, marker })
+  });
+  const followers = createFollowers({ sink: host.emit, ...FOLLOWERS });
   const forgetSandbox = (sandboxId) => {
     conversations.forget(sandboxId);
     agents.forget(sandboxId);
@@ -1680,6 +1841,7 @@ var createServiceContext = (host) => {
     ranking,
     environments,
     remotes,
+    projects,
     createJobs,
     statusView: async (directory) => {
       const snapshot = await sandboxes.get();
@@ -1939,7 +2101,7 @@ var conversationRoutes = (deps) => [
 ];
 
 // service/routes/create.ts
-import { isAbsolute as isAbsolute2 } from "node:path";
+import { isAbsolute as isAbsolute3 } from "node:path";
 
 // service/domain/snapshots.ts
 var listSavedSnapshots = async () => {
@@ -2015,7 +2177,7 @@ var createRoutes = (deps) => [
         listSavedSnapshots().catch(() => [])
       ]);
       let suggested = environments.find((environment) => environment.isDefault)?.name ?? null;
-      if (directory && isAbsolute2(directory)) {
+      if (directory && isAbsolute3(directory)) {
         const repoSlugs = await deps.remotes.get(directory).catch(() => []);
         suggested = chooseEnvironment(environments, { folderName: folderNameOf(directory), repoSlugs }) ?? suggested;
       }
@@ -2428,6 +2590,17 @@ var mentionRoutes = (deps) => [
   })
 ];
 
+// service/routes/projects.ts
+var projectRoutes = (deps) => [
+  route("POST", "/projects", async (context) => {
+    const body = await context.json();
+    const directories = Array.isArray(body?.directories) ? body.directories.filter((entry) => typeof entry === "string") : [];
+    if (deps.projects.replace(directories))
+      deps.onChanged();
+    return context.reply(200, { ok: true });
+  })
+];
+
 // service/routes/sandboxes.ts
 var summaryOf = (sandbox) => ({
   id: sandbox.id,
@@ -2445,8 +2618,11 @@ var summaryOf = (sandbox) => ({
 var isLifecycleAction = (action) => action === "stop" || action === "resume" || action === "extend";
 var sandboxRoutes = (deps) => [
   route("GET", "/sandboxes", async (context) => {
+    const directory = context.search.get("directory");
+    if (directory)
+      deps.projects.remember([directory]);
     const snapshot = await deps.sandboxes.get();
-    const scope = await deps.scoper.apply(snapshot.sandboxes, context.search.get("directory"));
+    const scope = await deps.scoper.apply(snapshot.sandboxes, directory);
     const ordered = [...scope.entries].sort((left, right) => Number(right.inProject) - Number(left.inProject));
     const body = {
       sandboxes: ordered.map((entry) => ({
@@ -2507,8 +2683,11 @@ var scheduleRoutes = (options) => [
 // service/routes/status.ts
 var statusRoutes = (deps) => [
   route("GET", "/status", async (context) => {
+    const directory = context.search.get("directory");
+    if (directory)
+      deps.projects.remember([directory]);
     try {
-      return context.reply(200, await deps.statusView(context.search.get("directory")));
+      return context.reply(200, await deps.statusView(directory));
     } catch (failure) {
       return context.reply(200, {
         rows: [{ kind: "note", id: "note-error", text: describeFailure(failure).text, tone: "error" }]
@@ -2548,7 +2727,8 @@ if (!Number.isInteger(port) || port <= 0 || port > 65535) {
 var host = createServiceHost({ env: process.env });
 var context = createServiceContext({
   setInstructions: (directory, text) => host.setInstructions(directory, text),
-  emit: (topic, data) => host.emit(topic, data)
+  emit: (topic, data) => host.emit(topic, data),
+  setMark: (target, mark) => host.setMark(target, mark)
 });
 var route2 = createRouter([
   ...statusRoutes(context),
@@ -2558,6 +2738,12 @@ var route2 = createRouter([
   ...createRoutes(context),
   ...agentRoutes(context),
   ...mentionRoutes(context),
+  ...projectRoutes({
+    projects: context.projects,
+    onChanged: () => {
+      context.refresh().catch(() => {});
+    }
+  }),
   ...scheduleRoutes({
     onWake: () => {
       context.refresh().catch(() => {});

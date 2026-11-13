@@ -3,12 +3,15 @@ import { describeFailure } from '../failures.ts';
 import { route, type Route } from '../router.ts';
 import { readStatusAction } from '../status/actions.ts';
 
-type Deps = Pick<ServiceContext, 'sandboxes' | 'statusView' | 'perform' | 'refresh' | 'forget'>;
+type Deps = Pick<ServiceContext, 'sandboxes' | 'projects' | 'statusView' | 'perform' | 'refresh' | 'forget'>;
 
 export const statusRoutes = (deps: Deps): Route[] => [
   route('GET', '/status', async (context) => {
+    const directory = context.search.get('directory');
+    if (directory) deps.projects.remember([directory]);
+
     try {
-      return context.reply(200, await deps.statusView(context.search.get('directory')));
+      return context.reply(200, await deps.statusView(directory));
     } catch (failure) {
       // A section never shows an error page; it says what went wrong in a row.
       return context.reply(200, {

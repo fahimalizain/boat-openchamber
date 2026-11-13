@@ -48,12 +48,9 @@
     padding: 4px 12px 12px;
     overflow-y: auto;
   }
-  body[data-create="true"] .create { display: flex; }
-  body[data-create="true"] .block,
-  body[data-create="true"] .chat-wrap,
-  body[data-create="true"] .composer { display: none; }
   #create-blocked { color: var(--oc-warning-text, inherit); }
   #create-name[hidden] { display: none; }
+  .compact-nav { display: none; padding: 0 12px 6px; }
   .slot { display: inline-flex; }
   .section-head {
     display: flex; align-items: center; justify-content: space-between;
@@ -106,6 +103,46 @@
   .provider-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
   .provider-row > * { flex: 1 1 0; min-width: 0; }
   .composer-actions { margin-left: auto; }
+
+  /* Phone: one column, touch targets, the list and the chat swapped. */
+  html[data-layout="compact"] body { font-size: 14px; }
+  html[data-layout="compact"] .head {
+    padding: calc(10px + var(--safe-top, 0px)) calc(12px + var(--safe-right, 0px)) 4px calc(12px + var(--safe-left, 0px));
+  }
+  html[data-layout="compact"] .block,
+  html[data-layout="compact"] .banner,
+  html[data-layout="compact"] .compact-nav {
+    padding-left: calc(12px + var(--safe-left, 0px));
+    padding-right: calc(12px + var(--safe-right, 0px));
+  }
+  html[data-layout="compact"] button { min-height: 44px; }
+  html[data-layout="compact"] .slot { flex: 1 1 calc(50% - 6px); }
+  html[data-layout="compact"] .slot > * { width: 100%; }
+  html[data-layout="compact"] .slot button { width: 100%; }
+  html[data-layout="compact"] #composer-actions .slot,
+  html[data-layout="compact"] #create-submit .slot,
+  html[data-layout="compact"] #create-cancel .slot,
+  html[data-layout="compact"] #compact-back .slot { flex: 1 1 100%; }
+  html[data-layout="compact"] .conversations {
+    display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+  }
+  html[data-layout="compact"] .conv-list { max-height: none; flex: 1 1 auto; }
+  html[data-layout="compact"] .composer,
+  html[data-layout="compact"] .create {
+    padding-bottom: calc(12px + var(--safe-bottom, 0px) + var(--keyboard-inset, 0px));
+  }
+  html[data-layout="compact"] .chat { padding-bottom: calc(12px + var(--safe-bottom, 0px)); }
+  html[data-layout="compact"][data-compact-list="false"] .conversations { display: none; }
+  html[data-layout="compact"][data-compact-list="false"] .compact-nav { display: block; }
+  html[data-layout="compact"][data-compact-list="true"] .chat-wrap,
+  html[data-layout="compact"][data-compact-list="true"] .composer { display: none; }
+
+  /* The create form takes the whole panel. Last, so it beats the compact rules. */
+  body[data-create="true"] #root .create { display: flex; }
+  body[data-create="true"] #root .block,
+  body[data-create="true"] #root .chat-wrap,
+  body[data-create="true"] #root .composer,
+  body[data-create="true"] #root .compact-nav { display: none; }
 </style>
 </head>
 <body>
@@ -136,13 +173,14 @@
     <div id="sandbox-meta" class="meta"></div>
     <div id="sandbox-actions" class="row"></div>
   </section>
-  <section class="block">
+  <section class="block conversations">
     <div class="section-head">
       <span class="section-title">Conversations</span>
       <div id="new-conversation" class="slot-row"></div>
     </div>
     <div class="conv-list"><div id="conversation-list"></div></div>
   </section>
+  <div id="compact-nav" class="compact-nav"><div id="compact-back"></div></div>
   <section class="chat-wrap">
     <div id="chat-empty"></div>
     <div id="chat" class="chat" role="log" aria-live="polite"></div>

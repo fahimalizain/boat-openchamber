@@ -3,6 +3,7 @@ import { isAgentProvider } from '../shared/agent.ts';
 import type { SandboxAction } from '../shared/types.ts';
 import type { ServiceClient } from './api.ts';
 import type { Loaders } from './data.ts';
+import type { Preferences, PreferenceStore } from './preferences.ts';
 import type { Cell, Reporter } from './state.ts';
 
 export type Actions = {
@@ -16,6 +17,8 @@ export type Actions = {
   submit: () => Promise<void>;
   interrupt: () => Promise<void>;
   runSandboxAction: (action: SandboxAction) => Promise<void>;
+  showConversationList: () => void;
+  persistPreferences: () => void;
 };
 
 const DONE_MESSAGES: Record<SandboxAction, string> = {
@@ -32,8 +35,37 @@ export const createActions = (deps: {
   reporter: Reporter;
   toast: (kind: 'info' | 'success' | 'error', message: string) => void;
   openUrl: (url: string) => Promise<void>;
+  preferences: PreferenceStore;
 }): Actions => {
-  const { cell, client, loaders, reporter, toast, openUrl } = deps;
+  const { cell, client, loaders, reporter, toast, openUrl, preferences } = deps;
+
+  let modelTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const savePreferences = (): void => {
+    const state = cell.get();
+    const current: Preferences = {
+      sandboxId: state.sandboxId,
+      provider: state.provider,
+      model: state.model,
+    };
+    void preferences.save(state.directory, current).catch(() => {});
+  };
+
+  const saveModelSoon = (): void => {
+    if (modelTimer) clearTimeout(modelTimer);
+    modelTimer = setTimeout(() => {
+      modelTimer = null;
+      savePreferences();
+    }, 500);
+  };
+
+  const applyStoredPreferences = async (directory: string | null): Promise<string | null> => {
+    const stored = await preferences.get(directory);
+    if (stored?.provider && isAgentProvider(stored.provider)) cell.get().provider = stored.provider;
+    if (stored?.model) cell.get().model = stored.model;
+    cell.notify();
+    return stored?.sandboxId ?? null;
+  };
 
   const refreshAfterAction = async (): Promise<void> => {
     await loaders.sandboxes();
@@ -43,7 +75,8 @@ export const createActions = (deps: {
 
   const boot = async (): Promise<void> => {
     try {
-      await loaders.sandboxes();
+      const preferred = await applyStoredPreferences(cell.get().directory);
+      await loaders.sandboxes(preferred);
       cell.patch({ loading: false, banner: null });
     } catch (failure) {
       cell.patch({ loading: false });
@@ -76,6 +109,7 @@ export const createActions = (deps: {
     } catch (failure) {
       reporter.fail('Could not list conversations', failure);
     }
+    savePreferences();
   };
 
   const submit = async (): Promise<void> => {
@@ -170,7 +204,10 @@ export const createActions = (deps: {
       if (directory === state.directory) return;
       state.directory = directory;
       cell.notify();
-      void loaders.sandboxes().catch((failure) => reporter.fail('Could not reload sandboxes', failure));
+      void (async () => {
+        const preferred = await applyStoredPreferences(directory);
+        await loaders.sandboxes(preferred);
+      })().catch((failure) => reporter.fail('Could not reload sandboxes', failure));
     },
     selectSandbox,
     selectConversation: loaders.openConversation,
@@ -178,13 +215,24 @@ export const createActions = (deps: {
       cell.get().draft = text;
     },
     setProvider: (provider) => {
-      if (isAgentProvider(provider)) cell.patch({ provider });
+      if (!isAgentProvider(provider)) return;
+      cell.patch({ provider });
+      savePreferences();
     },
     setModel: (model) => {
       cell.get().model = model;
+      saveModelSoon();
     },
     submit,
     interrupt,
     runSandboxAction,
+    showConversationList: () => cell.patch({ compactList: true }),
+    persistPreferences: () => {
+      if (modelTimer) {
+        clearTimeout(modelTimer);
+        modelTimer = null;
+      }
+      savePreferences();
+    },
   };
 };

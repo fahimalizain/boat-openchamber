@@ -11,6 +11,7 @@ import { conversationRoutes } from './routes/conversations.ts';
 import { createRoutes } from './routes/create.ts';
 import { eventRoutes } from './routes/events.ts';
 import { mentionRoutes } from './routes/mentions.ts';
+import { projectRoutes } from './routes/projects.ts';
 import { sandboxRoutes } from './routes/sandboxes.ts';
 import { scheduleRoutes } from './routes/schedule.ts';
 import { statusRoutes } from './routes/status.ts';
@@ -32,6 +33,7 @@ const host = createServiceHost({ env: process.env });
 const context = createServiceContext({
   setInstructions: (directory, text) => host.setInstructions(directory, text),
   emit: (topic, data) => host.emit(topic, data as JsonValue),
+  setMark: (target, mark) => host.setMark(target, mark),
 });
 
 const route = createRouter([
@@ -42,6 +44,12 @@ const route = createRouter([
   ...createRoutes(context),
   ...agentRoutes(context),
   ...mentionRoutes(context),
+  ...projectRoutes({
+    projects: context.projects,
+    onChanged: () => {
+      void context.refresh().catch(() => {});
+    },
+  }),
   ...scheduleRoutes({
     onWake: () => {
       void context.refresh().catch(() => {});

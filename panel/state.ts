@@ -35,6 +35,8 @@ export type PanelState = {
   /** The OpenChamber project, handed to the service for the project matcher. */
   directory: string | null;
   create: CreateState;
+  /** On the phone: true shows the conversation list, false the chat. */
+  compactList: boolean;
 };
 
 export type Toast = (kind: 'info' | 'success' | 'error', message: string) => void;
@@ -57,6 +59,7 @@ export const initialState = (directory: string | null): PanelState => ({
   banner: null,
   directory,
   create: initialCreateState(),
+  compactList: true,
 });
 
 export type Cell = {

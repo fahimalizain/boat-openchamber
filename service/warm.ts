@@ -6,6 +6,7 @@ import type { PlanNote } from './data/plan-note.ts';
 import type { RunningAgents } from './data/running-agents.ts';
 import type { SandboxSnapshot } from './data/sandbox-list.ts';
 import type { InstructionsWriter } from './instructions.ts';
+import type { Marker } from './marks/marker.ts';
 
 export type Warmer = (snapshot: SandboxSnapshot) => void;
 
@@ -15,6 +16,7 @@ export const createWarmer = (options: {
   agents: RunningAgents;
   planNote: PlanNote;
   instructions: InstructionsWriter;
+  marker: Marker;
 }): Warmer => (snapshot) => {
   const up = snapshot.sandboxes.filter((sandbox) => isUpState(sandbox.state)).map((sandbox) => sandbox.id);
   options.desktop.warm(up);
@@ -26,5 +28,6 @@ export const createWarmer = (options: {
   options.conversations.sweep(valid);
 
   options.planNote.refresh();
+  options.marker.sync(snapshot);
   void options.instructions.sync(snapshot);
 };

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 — 2026-11-13
+
+- Sidebar marks: a small anchor on each registered project's rows, with the
+  sandbox count and running agents, set only when it changes and rate-limited.
+  The project list comes from the panel's `listProjects` and the open Work
+  Status directory, kept in `~/.boat-openchamber/projects.json`. The service now
+  sets `keepRunning` so marks survive an idle stop.
+- Phone: `panel.mobile` and a compact layout from `ready.device` — one column,
+  the conversation list and chat with a back button, 44px controls, safe-area
+  and keyboard insets, and the create form at 360px.
+- Preferences: the last sandbox, provider and model per project, in device
+  storage when `features.deviceStorage` allows it, in memory otherwise.
+- Upgraded to `@openchamber/sdk` 2.7.1 and an `engines.openchamber` floor of
+  `>=2.7.1` for marks and device fields.
+
 ## 0.2.0 — 2026-11-13
 
 - Create sandboxes from the panel: a **New sandbox** form with three sources

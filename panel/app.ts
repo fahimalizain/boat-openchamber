@@ -3,7 +3,8 @@ import type { HostReadyContext } from '@openchamber/sdk';
 import { connectHost } from '@openchamber/sdk';
 
 import { createServiceClient } from './api.ts';
-import { byId } from './kit.ts';
+import { byId, buttonSlot } from './kit.ts';
+import { createPreferences } from './preferences.ts';
 import { createStore } from './store.ts';
 import { createBannerView } from './views/banner.ts';
 import { createComposer } from './views/composer.ts';
@@ -20,14 +21,29 @@ export type App = {
 };
 
 export const startApp = (host: Host, context: HostReadyContext): App => {
+  const client = createServiceClient(host);
   const store = createStore({
-    client: createServiceClient(host),
+    client,
     initialDirectory: context.directory,
     toast: (kind, message) => {
       void host.toast({ kind, message }).catch(() => {});
     },
     openUrl: (url) => host.openUrl(url),
+    preferences: createPreferences({
+      storage: host.storage,
+      device: context.features?.deviceStorage === true,
+    }),
   });
+
+  const syncProjects = async (): Promise<void> => {
+    try {
+      const snapshot = await host.listProjects();
+      if (snapshot.state !== 'ready') return;
+      await client.rememberProjects(snapshot.projects.map((project) => project.directory));
+    } catch {
+      // The service may be stopped; another open tries again.
+    }
+  };
 
   const banner = createBannerView(byId('banner-inner'), byId('banner'));
 
@@ -130,6 +146,7 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
   const render = (): void => {
     const state = store.getState();
     document.body.dataset.create = state.create.open ? 'true' : 'false';
+    document.body.dataset.compactList = state.compactList ? 'true' : 'false';
     banner.render(state.banner);
     header.render(state);
     list.render(state);
@@ -139,6 +156,13 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
   };
   store.subscribe(render);
 
+  buttonSlot(byId('compact-back'), {
+    label: '← Conversations',
+    size: 'sm',
+    variant: 'ghost',
+    onClick: store.showConversationList,
+  });
+
   host.onServiceEvent(({ topic, data }) => store.handleServiceEvent(topic, data));
 
   window.setInterval(() => store.pingWatch(), 20_000);
@@ -147,12 +171,18 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
   }, 4_000);
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') void store.refresh();
+    if (document.visibilityState !== 'visible') return;
+    void store.refresh();
+    void syncProjects();
   });
-  window.addEventListener('pagehide', () => store.unwatchCurrent());
+  window.addEventListener('pagehide', () => {
+    store.unwatchCurrent();
+    store.persistPreferences();
+  });
 
   render();
   void store.boot();
+  void syncProjects();
 
   return { setDirectory: (directory) => store.setDirectory(directory) };
 };

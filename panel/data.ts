@@ -4,7 +4,7 @@ import { resetConversation, type Cell, type Reporter } from './state.ts';
 import { messageOf } from './state.ts';
 
 export type Loaders = {
-  sandboxes: () => Promise<void>;
+  sandboxes: (preferredSandboxId?: string | null) => Promise<void>;
   conversations: (settings?: { autoSelect?: boolean }) => Promise<void>;
   history: () => Promise<void>;
   openConversation: (conversationId: string | null) => Promise<void>;
@@ -44,6 +44,7 @@ export const createLoaders = (deps: {
       running,
       live: false,
       watchBroken: false,
+      compactList: false,
     });
     if (!conversationId || !state.sandboxId) return;
 
@@ -90,16 +91,19 @@ export const createLoaders = (deps: {
     cell.notify();
   };
 
-  const sandboxes = async (): Promise<void> => {
+  const sandboxes = async (preferredSandboxId: string | null = null): Promise<void> => {
     const state = cell.get();
     const data = await client.sandboxes(state.directory);
     state.projectScoped = data.projectScoped;
     const stillThere = state.sandboxId !== null && data.sandboxes.some((entry) => entry.id === state.sandboxId);
+    const preferred = preferredSandboxId && data.sandboxes.some((entry) => entry.id === preferredSandboxId)
+      ? preferredSandboxId
+      : null;
     const nextId = stillThere
       ? state.sandboxId
-      : data.projectScoped
+      : preferred ?? (data.projectScoped
         ? (data.sandboxes.find((entry) => entry.inProject)?.id ?? null)
-        : (data.sandboxes[0]?.id ?? null);
+        : (data.sandboxes[0]?.id ?? null));
     const changed = nextId !== state.sandboxId;
 
     state.sandboxes = data.sandboxes;

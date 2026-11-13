@@ -9,7 +9,7 @@ _Screenshot coming soon._
 
 ## Requirements
 
-- OpenChamber 2.7.0 or newer (web or desktop; VS Code and the phone load no extensions).
+- OpenChamber 2.7.1 or newer (web, desktop and the phone; VS Code loads no extensions).
 - The [boat CLI](https://docs.boat.dev) on the same machine, signed in — `boat status` should answer.
 - `git` on PATH, used to read a project's remote for scoping.
 
@@ -49,6 +49,19 @@ agent gets the text, not the window.
 plus the `boat exec` / `boat prompt` one-liners. With a project open, the project's
 sandboxes are named first in their own scoped instructions.
 
+**Sidebar marks** — each registered project with sandboxes carries a small anchor
+on its rows: green while a sandbox is up or an agent works, muted when only
+stopped sandboxes remain, with a tooltip such as “2 sandboxes · 1 agent running”.
+The mark clears when the project has none.
+
+**Phone** — the panel opts in on the phone (`panel.mobile`) and switches to a
+compact layout: one column, the conversation list and chat with a back
+button, touch-sized controls, and safe-area padding. The create form works the
+same at 360px.
+
+**Remembered choices** — the last sandbox, provider and model are kept per
+project, in device storage when the host offers it and in memory otherwise.
+
 ## Project scoping
 
 A sandbox belongs to the open project when, in priority order:
@@ -61,7 +74,10 @@ A sandbox belongs to the open project when, in priority order:
 
 With no project open, every sandbox shows. The create form defaults to the
 environment that matches the open project, so a sandbox created from the panel
-lands in it.
+lands in it. Sidebar marks follow the same scoping; a `{ directory }` mark lands
+on that project's sessions and worktree row, and the project list is learned
+from the panel and from the open Work Status directory, then kept in
+`~/.boat-openchamber/projects.json`.
 
 ## Privacy
 
@@ -88,9 +104,11 @@ works. Installing an extension never builds it: `service/main.js` and
 ```
 shared/    sandbox, conversation and event shapes; route DTOs; transcript; time helpers
 service/   main.ts wires HTTP; boat.ts is the CLI adapter; domain/ typed reads;
-           data/ caches; project/ scoping; status/ section; mentions/ rows and text;
-           create/ validation and the create job; routes/ one module per route group
-panel/     main.ts bootstraps; api.ts client; state + data + actions + live + create;
+           data/ caches and the project registry; project/ scoping; status/ section;
+           mentions/ rows and text; create/ validation and the create job;
+           marks/ mark computation and the marker; routes/ one module per route group
+panel/     main.ts bootstraps; api.ts client; state + data + actions + live + create
+           + preferences; device.ts picks the compact layout;
            views/ header, conversation list, conversation, composer, create form, banner
 ```
 

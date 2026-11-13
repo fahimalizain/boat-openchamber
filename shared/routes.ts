@@ -90,6 +90,11 @@ export type CreateProgress = {
   message?: string;
 };
 
+export type ProjectsRequest = {
+  /** The registered OpenChamber projects, as the panel sees them. */
+  directories: string[];
+};
+
 export type WatchRequest = { sandbox: string; conversation: string };
 export type UnwatchRequest = WatchRequest;
 
