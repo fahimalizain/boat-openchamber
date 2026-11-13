@@ -33,11 +33,12 @@ note for the sandboxes in others.
 others, one row each with state, size, environment and auto-stop time; Stop or
 Resume is on the row, with Extend, Desktop, OpenCode and Copy in its menu, and
 clicking the row opens its OpenCode sessions. **Sessions** talks to the sandbox's
-own OpenCode server: a dense session list with a directory filter, the session's
-transcript with collapsed reasoning and tool rows that expand in place, inline
-permission and question cards, and a composer that picks the agent, model and
-reasoning level. A line under the list names the open session's status, folder
-and agent, and the live badge shows the event relay. **OpenCode** starts the
+own OpenCode server: the open session's title opens a switcher card with New
+session, the sandbox's sessions and the directory filter, and the tab shows that
+list in place of the transcript while no session is open. The transcript
+collapses reasoning and expands tool rows in place, with inline permission and
+question cards, and a composer that picks the agent, model and reasoning level.
+The live badge in the header shows the event relay. **OpenCode** starts the
 sandbox's server if it is not running, hosts it on a private boat URL and opens
 its web UI already signed in; each click mints a fresh one-time link. Every
 action ends in a toast, and failures show a banner.
@@ -67,9 +68,9 @@ when only stopped sandboxes remain, with a tooltip such as “2 sandboxes · 1 a
 running”. The mark clears when the project has none.
 
 **Phone** — the panel opts in on the phone (`panel.mobile`) and switches to a
-compact layout: one column, the session list and transcript with a back
-button, touch-sized controls, and safe-area padding. The create form works the
-same at 360px.
+compact layout: one column, the session switcher as a full-width card, the
+transcript, touch-sized controls, and safe-area padding. The create form works
+the same at 360px.
 
 **Remembered choices** — the last sandbox, provider and model are kept per
 project, in device storage when the host offers it and in memory otherwise.
@@ -125,8 +126,9 @@ service/   main.ts wires HTTP; boat.ts is the CLI adapter; domain/ typed reads;
            mentions/ rows and text; create/ validation and the create job;
            marks/ mark computation and the marker; routes/ one module per route group
 panel/     main.ts bootstraps; api.ts client; state + data + actions + live + create
-           + preferences; device.ts picks the compact layout; chat-model + catalog;
-           views/ header, session list, session, message, composer, create, banner
+           + preferences; device.ts picks the compact layout; chat-model + catalog +
+           session-pick; views/ header, session bar (switcher), session list (the
+           inline picker), session, message, composer, create, banner
 ```
 
 CI (`.github/workflows/ci.yml`) installs, typechecks, tests, builds, runs the

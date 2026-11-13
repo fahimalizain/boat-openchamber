@@ -3,7 +3,7 @@ import type { HostReadyContext } from '@openchamber/sdk';
 import { connectHost } from '@openchamber/sdk';
 
 import { createServiceClient } from './api.ts';
-import { byId, buttonSlot } from './kit.ts';
+import { byId } from './kit.ts';
 import { createPreferences } from './preferences.ts';
 import { createStore } from './store.ts';
 import { createBannerView } from './views/banner.ts';
@@ -83,7 +83,13 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
   );
 
   const sessionList = createSessionList(
-    { list: byId('session-list'), newButton: byId('new-session'), directory: byId('session-directory') },
+    {
+      picker: byId('session-picker'),
+      list: byId('session-list'),
+      newButton: byId('session-new'),
+      directory: byId('session-directory'),
+      directoryRow: byId('session-directory-row'),
+    },
     {
       onSelect: (sessionId) => {
         void store.selectSession(sessionId);
@@ -97,7 +103,17 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
     },
   );
 
-  const sessionBar = createSessionBar(byId('session-bar'));
+  const sessionBar = createSessionBar(byId('session-bar'), {
+    onSelect: (sessionId) => {
+      void store.selectSession(sessionId);
+    },
+    onNew: () => {
+      void store.newSession();
+    },
+    onDirectory: (directory) => {
+      void store.setDirectoryFilter(directory);
+    },
+  });
 
   const sessionView = createSessionView(
     {
@@ -179,7 +195,6 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
   const render = (): void => {
     const state = store.getState();
     document.body.dataset.create = state.create.open ? 'true' : 'false';
-    document.body.dataset.compactList = state.compactList ? 'true' : 'false';
     banner.render(state.banner);
     tabs.render(state);
     sandboxList.render(state);
@@ -191,13 +206,6 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
     createForm.render(state);
   };
   store.subscribe(render);
-
-  buttonSlot(byId('compact-back'), {
-    label: '← Sessions',
-    size: 'sm',
-    variant: 'ghost',
-    onClick: store.showSessionList,
-  });
 
   host.onServiceEvent(({ topic, data }) => store.handleServiceEvent(topic, data));
 

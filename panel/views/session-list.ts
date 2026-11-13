@@ -1,27 +1,24 @@
-/** The sessions list: a directory filter, New session, and one row per OpenCode session. */
-import { mountList, mountSelect, type ListItem } from '@openchamber/sdk/ui';
+/**
+ * The inline picker the Sessions tab shows while no transcript is open: New
+ * session, the directory filter, and one dense row per OpenCode session.
+ */
+import { mountList, mountSelect } from '@openchamber/sdk/ui';
 
-import { clip } from '../../shared/json.ts';
-import { timeAgoAt } from '../../shared/time.ts';
+import { isStoppedState } from '../../shared/types.ts';
 import { buttonSlot } from '../kit.ts';
+import { directoryChoices, sessionItems, showsInlinePicker } from '../session-pick.ts';
 import type { PanelState } from '../store.ts';
 
 export type SessionListView = { render: (state: PanelState) => void };
 
-const folderOf = (directory: string | null): string => {
-  if (!directory) return '';
-  const parts = directory.split('/').filter(Boolean);
-  return parts[parts.length - 1] ?? directory;
-};
-
-const badgeOf = (session: PanelState['sessions'][number]): ListItem['badge'] => {
-  if (session.status === 'busy') return { label: 'busy', tone: 'success' };
-  if (session.status === 'error') return { label: 'error', tone: 'error' };
-  return { label: 'idle', tone: 'neutral' };
-};
-
 export const createSessionList = (
-  roots: { list: HTMLElement; newButton: HTMLElement; directory: HTMLElement },
+  roots: {
+    picker: HTMLElement;
+    list: HTMLElement;
+    newButton: HTMLElement;
+    directory: HTMLElement;
+    directoryRow: HTMLElement;
+  },
   handlers: {
     onSelect: (sessionId: string) => void;
     onNew: () => void;
@@ -50,27 +47,30 @@ export const createSessionList = (
   });
 
   const render = (state: PanelState): void => {
-    const items: ListItem[] = state.sessions.map((session) => ({
-      id: session.id,
-      title: clip(session.title ?? 'New session', 70),
-      meta: timeAgoAt(session.updatedAt),
-      badge: badgeOf(session),
-    }));
+    const sandbox = state.sandboxes.find((entry) => entry.id === state.sandboxId) ?? null;
+    const stopped = sandbox !== null && isStoppedState(sandbox.state);
+    const shown = showsInlinePicker({
+      sandboxId: state.sandboxId,
+      stopped,
+      sessionId: state.sessionId,
+      chat: state.chat !== null,
+    });
+
+    roots.picker.hidden = !shown;
+    if (!shown) return;
 
     list.update({
-      items,
+      items: sessionItems(state.sessions),
       selectedId: state.sessionId,
       emptyText: state.sessionsLoading ? 'Loading sessions…' : 'No sessions yet.',
     });
     create.handle.update({ disabled: state.busy || !state.sandboxId });
 
-    const directories = state.directories.length > 0
-      ? state.directories
-      : (state.sessionDirectory ? [state.sessionDirectory] : []);
-    roots.directory.hidden = directories.length <= 1;
+    const choices = directoryChoices(state.directories, state.sessionDirectory);
+    roots.directoryRow.hidden = choices.length <= 1;
     directory.update({
       value: state.directoryFilter ?? (state.sessionDirectory || null),
-      options: directories.map((entry) => ({ id: entry, label: folderOf(entry), hint: entry })),
+      options: choices,
       disabled: state.busy,
     });
   };

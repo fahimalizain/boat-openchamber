@@ -26,7 +26,7 @@
     "build": "sh scripts/bun.sh x openchamber-guest-bundle --node service/main.ts service/main.js && sh scripts/bun.sh x openchamber-guest-bundle panel/main.ts panel/main.js",
     "check": "sh scripts/bun.sh x openchamber-guest-check",
     "typecheck": "tsc --noEmit",
-    "test": "node --test service/project/matcher.test.ts service/mentions/rows.test.ts service/create/progress.test.ts service/create/request.test.ts service/create/argv.test.ts panel/create-state.test.ts service/marks/mark.test.ts panel/device.test.ts panel/preferences.test.ts panel/tab.test.ts panel/sandbox-actions.test.ts service/domain/opencode.test.ts service/opencode/normalize.test.ts service/opencode/connection.test.ts panel/chat-model.test.ts panel/catalog.test.ts panel/markdown.test.ts"
+    "test": "node --test service/project/matcher.test.ts service/mentions/rows.test.ts service/create/progress.test.ts service/create/request.test.ts service/create/argv.test.ts panel/create-state.test.ts service/marks/mark.test.ts panel/device.test.ts panel/preferences.test.ts panel/tab.test.ts panel/sandbox-actions.test.ts service/domain/opencode.test.ts service/opencode/normalize.test.ts service/opencode/connection.test.ts panel/chat-model.test.ts panel/catalog.test.ts panel/markdown.test.ts panel/session-pick.test.ts"
   },
   "openchamber": {
     "apiVersion": 1,

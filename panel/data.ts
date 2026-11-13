@@ -96,7 +96,7 @@ export const createLoaders = (deps: {
     const state = cell.get();
     if (!state.sandboxId) return;
     if (!sessionId) {
-      cell.patch({ sessionId: null, chat: null, compactList: true });
+      cell.patch({ sessionId: null, chat: null });
       return;
     }
 
@@ -106,7 +106,7 @@ export const createLoaders = (deps: {
       ? selectionForSession(session, current, state.catalog)
       : settleSelection(current, state.catalog);
 
-    cell.patch({ sessionId, chat: null, compactList: false, ...selection });
+    cell.patch({ sessionId, chat: null, ...selection });
     await messages(sessionId);
   };
 
@@ -158,7 +158,7 @@ export const createLoaders = (deps: {
       void client.unwatch(previous).catch(() => {});
     }
     resetSession(cell);
-    cell.patch({ sandboxId, compactList: true });
+    cell.patch({ sandboxId });
 
     if (!sandboxId || !canTalk(sandboxId)) return;
 

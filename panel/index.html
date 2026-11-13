@@ -46,7 +46,6 @@
   }
   #create-blocked { color: var(--oc-warning-text, inherit); }
   .create-capacity { font-size: 12px; color: var(--oc-muted, inherit); }
-  .compact-nav { display: none; padding: 0 12px 6px; }
   .slot { display: inline-flex; }
   .section-head {
     display: flex; align-items: center; justify-content: space-between;
@@ -92,33 +91,106 @@
   .dot-error { background: var(--oc-error, #dc2626); }
   .dot-muted { background: var(--oc-muted, currentColor); }
 
-  /* Sessions tab: one header row, a dense list, a one-line session bar. */
+  /* Sessions tab: one toolbar row, the session header that owns the switcher,
+     then the transcript — or the inline picker when none is open. */
   .sessions-header {
-    display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px;
-    padding: 2px 12px 6px; flex: 0 0 auto;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+    padding: 6px 12px 8px; flex: 0 0 auto;
   }
   .sessions-header > #session-sandbox-select { flex: 1 1 150px; min-width: 0; }
-  .sessions-header > #session-directory { flex: 0 1 150px; min-width: 0; }
-  .sessions-header > #new-session { flex: 0 0 auto; margin-left: auto; }
   .sessions-header > #session-sandbox-state { flex: 0 0 auto; }
   .sessions-resume { flex: 1 1 100%; }
-  /* Four whole rows (4 × 34px plus the three 1px gaps), so a scrolled list ends
-     on a row boundary; the divider keeps it visibly apart from the session. */
-  .session-list-wrap {
-    flex: 0 0 auto; max-height: 139px; overflow-y: auto; overscroll-behavior: contain;
-    padding: 0 12px; border-bottom: 1px solid var(--oc-border, rgba(127, 127, 127, .25));
+
+  /* The header is the switcher's trigger: title, state and the relay badge. */
+  .session-bar { flex: 0 0 auto; padding: 0 12px 8px; min-width: 0; }
+  .session-toggle {
+    display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0;
+    min-height: 34px; margin: 0; padding: 0 9px;
+    border: 1px solid var(--oc-border, rgba(127, 127, 127, .25));
+    border-radius: 8px; background: var(--oc-subtle, rgba(127, 127, 127, .05));
+    color: inherit; font: inherit; text-align: left; cursor: pointer;
   }
-  .session-list-wrap .oc-sdk { padding: 0; }
-  .session-list-wrap .oc-sdk-row { height: 34px; padding: 0 8px; gap: 6px; }
-  .session-list-wrap .oc-sdk-row-main { justify-content: center; }
-  .session-list-wrap .oc-sdk-row-title { font-size: 12px; }
-  .session-list-wrap .oc-sdk-row-meta { font-size: 10px; }
-  .session-list-wrap .oc-sdk-badge { font-size: 9px; padding: 0 6px; }
-  .session-list-wrap .oc-sdk-list { gap: 1px; }
-  /* Under a finger the kit's rows are 44px: four of those plus the gaps. */
-  @media (pointer: coarse) {
-    .session-list-wrap { max-height: 179px; }
+  .session-toggle:hover { background: var(--oc-hover, rgba(127, 127, 127, .08)); }
+  .session-toggle[aria-expanded="true"] {
+    background: var(--oc-subtle, rgba(127, 127, 127, .12));
+    border-color: var(--oc-primary, currentColor);
   }
+  .session-chevron {
+    flex: 0 0 auto; width: 6px; height: 6px;
+    border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+    transform: rotate(45deg); opacity: .7;
+    transition: transform 120ms ease-out;
+  }
+  .session-toggle[aria-expanded="true"] .session-chevron { transform: rotate(-135deg); }
+  .session-title {
+    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-size: 12.5px; font-weight: 600;
+  }
+  .session-toggle .chip, .session-toggle .live { flex: 0 0 auto; }
+
+  /* The switcher card: New session, the sandbox's sessions, the directory filter. */
+  .session-menu {
+    position: fixed; z-index: 60;
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 4px;
+    border: 1px solid var(--oc-border, rgba(127, 127, 127, .3));
+    border-radius: 10px;
+    background: var(--oc-elevated, var(--oc-bg, #1b1b1b));
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .28);
+  }
+  .session-menu-new {
+    display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+    width: 100%; min-height: 32px; padding: 0 8px;
+    border: 0; border-radius: 6px; background: none;
+    color: var(--oc-primary-text, var(--oc-primary, inherit));
+    font: inherit; font-size: 12px; font-weight: 500; text-align: left; cursor: pointer;
+  }
+  .session-menu-new:hover { background: var(--oc-hover, rgba(127, 127, 127, .08)); }
+  .session-menu-new:disabled { opacity: .5; pointer-events: none; }
+  .session-menu-plus {
+    flex: 0 0 auto; width: 10px; text-align: center;
+    font-size: 15px; font-weight: 400; line-height: 1;
+  }
+  .session-menu-rows {
+    display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+    overflow-y: auto; overscroll-behavior: contain;
+    margin-top: 2px; padding-top: 4px;
+    border-top: 1px solid var(--oc-border, rgba(127, 127, 127, .2));
+  }
+  .session-menu-rows .oc-sdk { padding: 0; }
+  .session-menu-rows .oc-sdk-list { gap: 1px; }
+  .session-menu-rows .oc-sdk-row { min-height: 32px; padding: 4px 8px; gap: 8px; }
+  .session-menu-rows .oc-sdk-row-title { font-size: 12px; }
+  .session-menu-rows .oc-sdk-row-meta { font-size: 10px; }
+  .session-menu-rows .oc-sdk-badge { font-size: 9px; padding: 0 6px; }
+  .session-menu-foot {
+    flex: 0 0 auto; margin-top: 2px; padding: 6px 4px 2px;
+    border-top: 1px solid var(--oc-border, rgba(127, 127, 127, .2));
+  }
+  .session-menu-foot .oc-sdk-select { gap: 2px; }
+  .session-menu-foot .oc-sdk-trigger { width: 100%; }
+
+  /* The inline picker: the tab's content while no transcript is open. */
+  .session-picker {
+    display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+    padding: 2px 12px 12px;
+  }
+  .picker-head {
+    display: flex; align-items: center; gap: 8px;
+    flex: 0 0 auto; padding: 2px 0 6px;
+  }
+  .picker-head .slot-row { flex: 0 0 auto; margin-left: auto; }
+  .picker-head .slot { flex: 0 0 auto; }
+  .picker-head .slot > * { width: auto; }
+  .picker-directory-row { flex: 0 0 auto; max-width: 260px; padding: 0 0 8px; }
+  .picker-directory-row .oc-sdk-select { gap: 3px; }
+  .picker-directory-row .oc-sdk-trigger { width: 100%; }
+  .picker-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .picker-list .oc-sdk-list { gap: 1px; }
+  .picker-list .oc-sdk-row { min-height: 34px; padding: 5px 8px; }
+  .picker-list .oc-sdk-row-title { font-size: 12.5px; }
+  .picker-list .oc-sdk-row-meta { font-size: 10.5px; }
+  .picker-list .oc-sdk-badge { font-size: 9.5px; }
 
   /* A field that reads as a chip: no stacked caption, just the value. */
   .compact-field .oc-sdk-field-label {
@@ -130,26 +202,17 @@
 
   .chip {
     display: inline-flex; align-items: center; gap: 4px;
-    height: 20px; max-width: 100%; padding: 0 7px;
+    height: 22px; max-width: 100%; padding: 0 8px;
     border: 1px solid var(--oc-border, rgba(127, 127, 127, .3));
-    border-radius: 999px; font-size: 10px; color: var(--oc-muted, inherit);
+    border-radius: 999px; font-size: 10.5px; color: var(--oc-muted, inherit);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 0 auto;
   }
-  .chip.mono { font-family: var(--oc-mono, ui-monospace, monospace); font-size: 9.5px; }
   .chip.is-busy { color: var(--oc-success, #16a34a); border-color: currentColor; }
   .chip.is-error { color: var(--oc-error-text, var(--oc-error, #dc2626)); border-color: currentColor; }
   .chip.is-live { color: var(--oc-success, #16a34a); border-color: currentColor; }
+  .chip.mono { font-family: var(--oc-mono, ui-monospace, monospace); font-size: 9.5px; }
 
-  .session-bar {
-    display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px;
-    padding: 0 12px 6px; min-width: 0; flex: 0 0 auto;
-  }
-  .session-title {
-    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; font-size: 12.5px; font-weight: 600;
-  }
-  .session-bar .live { margin-left: auto; height: 20px; display: inline-flex; align-items: center; }
-  .session-bar .chip { flex: 0 1 auto; }
+  .session-toggle .live { height: 22px; display: inline-flex; align-items: center; }
 
   .chat-wrap { flex: 1 1 auto; min-height: 90px; display: flex; flex-direction: column; }
   #chat-empty { padding: 2px 12px 10px; }
@@ -344,9 +407,10 @@
   }
   html[data-layout="compact"] .block,
   html[data-layout="compact"] .banner,
-  html[data-layout="compact"] .compact-nav,
   html[data-layout="compact"] .sandbox-list,
-  html[data-layout="compact"] .sessions-header {
+  html[data-layout="compact"] .sessions-header,
+  html[data-layout="compact"] .session-bar,
+  html[data-layout="compact"] .session-picker {
     padding-left: calc(12px + var(--safe-left, 0px));
     padding-right: calc(12px + var(--safe-right, 0px));
   }
@@ -361,24 +425,22 @@
   html[data-layout="compact"] #composer-actions .slot > *,
   html[data-layout="compact"] .card-actions .slot > * { width: auto; }
   html[data-layout="compact"] #create-submit .slot,
-  html[data-layout="compact"] #create-cancel .slot,
-  html[data-layout="compact"] #compact-back .slot { flex: 1 1 100%; }
-  html[data-layout="compact"] .session-list-wrap { flex: 1 1 auto; max-height: none; min-height: 0; }
+  html[data-layout="compact"] #create-cancel .slot { flex: 1 1 100%; }
+  html[data-layout="compact"] .session-toggle { min-height: 44px; }
+  html[data-layout="compact"] .session-menu-new { min-height: 44px; }
+  html[data-layout="compact"] .picker-head .slot-row { flex: 0 0 auto; }
+  html[data-layout="compact"] .picker-head .slot { flex: 0 0 auto; }
+  html[data-layout="compact"] .picker-head .slot > * { width: auto; }
+  html[data-layout="compact"] .session-menu-rows .oc-sdk-row { min-height: 44px; }
   html[data-layout="compact"] #agent-select { flex: 0 1 34%; }
   html[data-layout="compact"] #model-select { flex: 1 1 52%; }
   html[data-layout="compact"] #variant-select { flex: 0 1 26%; }
   html[data-layout="compact"] #session-sandbox-select { flex: 1 1 100%; }
-  html[data-layout="compact"] #session-directory { flex: 1 1 45%; }
   html[data-layout="compact"] .composer,
   html[data-layout="compact"] .create {
     padding-bottom: calc(12px + var(--safe-bottom, 0px) + var(--keyboard-inset, 0px));
   }
   html[data-layout="compact"] .chat { padding-bottom: calc(12px + var(--safe-bottom, 0px)); }
-  html[data-layout="compact"][data-compact-list="false"] .sessions { display: none; }
-  html[data-layout="compact"][data-compact-list="false"] .compact-nav { display: block; }
-  html[data-layout="compact"][data-compact-list="true"] .chat-wrap,
-  html[data-layout="compact"][data-compact-list="true"] .composer,
-  html[data-layout="compact"][data-compact-list="true"] .session-bar { display: none; }
 
   /* The create form takes the whole panel. Last, so it beats the compact rules. */
   body[data-create="true"] #root .create { display: flex; }
@@ -408,14 +470,20 @@
     <div class="sessions-header">
       <div id="session-sandbox-select" class="compact-field"></div>
       <span id="session-sandbox-state" class="chip"></span>
-      <div id="session-directory" class="compact-field"></div>
-      <div id="new-session" class="slot-row"></div>
       <div id="session-resume" class="sessions-resume"></div>
     </div>
-    <div class="session-list-wrap"><div id="session-list"></div></div>
-    <div id="compact-nav" class="compact-nav"><div id="compact-back"></div></div>
     <div id="session-bar" class="session-bar" hidden></div>
     <section id="chat-wrap" class="chat-wrap">
+      <div id="session-picker" class="session-picker" hidden>
+        <div class="picker-head">
+          <span class="section-title">Pick a session</span>
+          <div id="session-new" class="slot-row"></div>
+        </div>
+        <div id="session-directory-row" class="picker-directory-row" hidden>
+          <div id="session-directory"></div>
+        </div>
+        <div id="session-list" class="picker-list"></div>
+      </div>
       <div id="chat-empty"></div>
       <div id="chat" class="chat" role="log" aria-live="polite">
         <div id="chat-log" class="chat-log"></div>

@@ -32,8 +32,6 @@ export type PanelState = {
   /** The OpenChamber project, handed to the service for the project matcher. */
   directory: string | null;
   create: CreateState;
-  /** On the phone: true shows the session list, false the chat. */
-  compactList: boolean;
   tab: PanelTab;
 
   /** The sandbox's OpenCode sessions, newest first as the service returns them. */
@@ -71,7 +69,6 @@ export const initialState = (directory: string | null): PanelState => ({
   banner: null,
   directory,
   create: initialCreateState(),
-  compactList: true,
   tab: 'sandboxes',
   sessions: [],
   sessionsLoading: false,

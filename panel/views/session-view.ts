@@ -4,6 +4,7 @@ import { mountEmpty } from '@openchamber/sdk/ui';
 import type { OpencodeMessage, OpencodePermissionDecision, OpencodeQuestionAnswer } from '../../shared/opencode.ts';
 import { isStoppedState } from '../../shared/types.ts';
 import { el } from '../kit.ts';
+import { showsInlinePicker } from '../session-pick.ts';
 import type { PanelState } from '../store.ts';
 import { createMessageNode } from './message.ts';
 import { createPermissionCard, createQuestionCard, type RequestCard } from './request-cards.ts';
@@ -47,16 +48,7 @@ const emptyState = (state: PanelState, stopped: boolean): { title: string; body:
   if (stopped) {
     return { title: 'Sandbox stopped', body: 'Resume it above to talk to its OpenCode sessions.' };
   }
-  if (state.sessionsLoading && state.sessions.length === 0) {
-    return { title: 'Reading OpenCode sessions…', body: 'Asking the sandbox for its sessions and models.' };
-  }
-  if (state.sessionId && !state.chat) {
-    return { title: 'Reading the session…', body: 'Fetching its messages from OpenCode.' };
-  }
-  if (state.sessions.length === 0) {
-    return { title: 'No sessions yet', body: 'Start a session to talk to OpenCode in this sandbox.' };
-  }
-  return { title: 'Pick a session', body: 'Choose a session above, or start a new one.' };
+  return { title: 'Reading the session…', body: 'Fetching its messages from OpenCode.' };
 };
 
 export const createSessionView = (
@@ -113,13 +105,19 @@ export const createSessionView = (
     const stopped = sandbox !== null && isStoppedState(sandbox.state);
     const available = Boolean(state.sandboxId) && !stopped;
     const chat = state.chat;
+    const picker = showsInlinePicker({
+      sandboxId: state.sandboxId,
+      stopped,
+      sessionId: state.sessionId,
+      chat: chat !== null,
+    });
 
     roots.wrap.hidden = !available;
-    roots.empty.hidden = !available || Boolean(chat);
+    roots.empty.hidden = !available || Boolean(chat) || picker;
     roots.chat.hidden = !chat;
 
     paintRequests(state);
-    if (!available) {
+    if (!available || picker) {
       paintedSession = null;
       return;
     }

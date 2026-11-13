@@ -22,6 +22,11 @@
   conversation routes, the boat event relay and boat's agent catalogue are gone.
 - The session list shows whole rows (four at a time) above a divider, and the
   directory filter only lists sessions whose own directory matches.
+- The open session's header is the session switcher: clicking its title opens a
+  card with New session, the sandbox's sessions (busy first, then newest) and
+  the directory filter, and with no session open that list fills the tab. The
+  always-visible list, the phone's back button and the header's folder and
+  agent/model chips are gone; the toolbar keeps the sandbox picker and state.
 - **OpenCode** in a running sandbox's row menu opens the sandbox's own OpenCode
   web UI in a browser tab. It starts OpenCode's background service when needed,
   hosts its port on a token-gated boat URL, and signs in with a one-time

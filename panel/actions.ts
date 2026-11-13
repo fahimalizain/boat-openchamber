@@ -45,7 +45,6 @@ export type Actions = {
   respondPermission: (requestId: string, decision: OpencodePermissionDecision) => Promise<void>;
   respondQuestion: (questionId: string, answer: Record<string, OpencodeQuestionAnswer>) => Promise<void>;
   runSandboxAction: (action: SandboxAction, sandboxId?: string) => Promise<void>;
-  showSessionList: () => void;
   persistPreferences: () => void;
 };
 
@@ -215,7 +214,6 @@ export const createActions = (deps: {
     current.sessions = [answer.session, ...current.sessions.filter((entry) => entry.id !== answer.session.id)];
     current.sessionId = answer.session.id;
     current.chat = createChatModel({ session: answer.session, messages: [] });
-    current.compactList = false;
     cell.notify();
     return answer.session;
   };
@@ -475,7 +473,6 @@ export const createActions = (deps: {
     respondPermission,
     respondQuestion,
     runSandboxAction,
-    showSessionList: () => cell.patch({ compactList: true }),
     persistPreferences: () => {
       if (saveTimer) {
         clearTimeout(saveTimer);
