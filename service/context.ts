@@ -2,18 +2,19 @@
 import type { GuestStatusView } from '@openchamber/sdk';
 
 import type { Sandbox, SandboxActionVerb } from '../shared/types.ts';
-import { createEnvironmentList } from './data/environment-list.ts';
+import { createCreateJobs, type CreateJobs } from './create/jobs.ts';
+import { createEnvironmentList, type EnvironmentList } from './data/environment-list.ts';
 import { createConversationList, type ConversationList } from './data/conversation-list.ts';
 import { createDesktopLinks, type DesktopLinks } from './data/desktop-links.ts';
 import { createPlanNote, type PlanNote } from './data/plan-note.ts';
 import { createRunningAgents, type RunningAgents } from './data/running-agents.ts';
 import { createSandboxList, type SandboxList, type SandboxSnapshot } from './data/sandbox-list.ts';
 import { listEnvironments } from './domain/environments.ts';
-import { listSandboxes } from './domain/sandboxes.ts';
+import { listSandboxes, spawnCreate } from './domain/sandboxes.ts';
 import { createFollowers, type EventSink, type Followers } from './followers.ts';
 import { createInstructionsWriter } from './instructions.ts';
 import { createProjectRanking, type ProjectRanking } from './project/ranking.ts';
-import { createRemoteCache } from './project/remotes.ts';
+import { createRemoteCache, type RemoteCache } from './project/remotes.ts';
 import { createScoper, type Scoper } from './project/scope.ts';
 import { performSandboxAction } from './status/actions.ts';
 import { buildProjectInstructions } from './status/text.ts';
@@ -33,6 +34,9 @@ export type ServiceContext = {
   followers: Followers;
   scoper: Scoper;
   ranking: ProjectRanking;
+  environments: EnvironmentList;
+  remotes: RemoteCache;
+  createJobs: CreateJobs;
   statusView: (directory: string | null) => Promise<GuestStatusView>;
   refresh: () => Promise<SandboxSnapshot>;
   forget: (sandboxId: string) => void;
@@ -69,11 +73,29 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
   const followers = createFollowers({ sink: host.emit, ...FOLLOWERS });
 
   const environments = createEnvironmentList({ ttlMs: TTL.environments, load: listEnvironments });
+  const remotes = createRemoteCache({ ttlMs: TTL.remotes });
   const ranking = createProjectRanking();
-  const scoper = createScoper({
-    environments,
-    remotes: createRemoteCache({ ttlMs: TTL.remotes }),
-    ranking,
+  const scoper = createScoper({ environments, remotes, ranking });
+
+  const forgetSandbox = (sandboxId: string): void => {
+    conversations.forget(sandboxId);
+    agents.forget(sandboxId);
+    desktop.forget(sandboxId);
+  };
+
+  const createJobs = createCreateJobs({
+    spawn: spawnCreate,
+    emit: (progress) => {
+      void host.emit('boat:create', progress).catch(() => {});
+    },
+    onCreated: (sandboxId) => {
+      forgetSandbox(sandboxId);
+      void sandboxes.get(true).catch(() => {});
+    },
+    onReady: (sandboxId) => {
+      forgetSandbox(sandboxId);
+      void sandboxes.get(true).catch(() => {});
+    },
   });
 
   return {
@@ -84,6 +106,9 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
     followers,
     scoper,
     ranking,
+    environments,
+    remotes,
+    createJobs,
     statusView: async (directory) => {
       const snapshot = await sandboxes.get();
       const scope = await scoper.apply(snapshot.sandboxes, directory);
@@ -108,11 +133,7 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
       });
     },
     refresh: () => sandboxes.get(true),
-    forget: (sandboxId) => {
-      conversations.forget(sandboxId);
-      agents.forget(sandboxId);
-      desktop.forget(sandboxId);
-    },
+    forget: forgetSandbox,
     perform: performSandboxAction,
   };
 };

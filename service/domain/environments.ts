@@ -11,6 +11,7 @@ export type EnvironmentSummary = {
   name: string;
   /** `owner/repo`, lower-case. */
   repos: string[];
+  isDefault: boolean;
 };
 
 const repoOf = (entry: unknown): string | null => {
@@ -38,7 +39,7 @@ export const listEnvironments = async (): Promise<EnvironmentSummary[]> => {
         return slug ? [slug] : [];
       })
       : [];
-    summaries.push({ name, repos });
+    summaries.push({ name, repos, isDefault: row.isDefault === true });
   }
   return summaries;
 };

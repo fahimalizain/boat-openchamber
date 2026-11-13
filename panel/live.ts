@@ -18,6 +18,7 @@ export const createLive = (deps: {
   client: ServiceClient;
   loaders: Loaders;
   reporter: Reporter;
+  onCreate: (data: unknown) => void;
 }): Live => {
   const { cell, client, loaders, reporter } = deps;
   let polling = false;
@@ -32,6 +33,10 @@ export const createLive = (deps: {
   };
 
   const handleServiceEvent = (topic: string, data: unknown): void => {
+    if (topic === 'boat:create') {
+      deps.onCreate(data);
+      return;
+    }
     if (!isRecord(data)) return;
     const state = cell.get();
     const sandbox = typeof data.sandbox === 'string' ? data.sandbox : '';

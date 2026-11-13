@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 — 2026-11-13
+
+- Create sandboxes from the panel: a **New sandbox** form with three sources
+  (environment, saved snapshot, fork), machine size, name, auto-stop hours and
+  plan capacity. Creating is asynchronous: the form returns at once, progress
+  arrives live, and the new sandbox is selected when it is ready.
+- A **Fork** action on the selected sandbox opens the form preset to Fork.
+- `GET /create-options` and `POST /create` on the service; the form defaults to
+  the environment that matches the open project.
+- Sizes and the auto-stop cap follow the plan (`small`/`default`/`large`, with
+  the plan's reason on a blocked size).
+
 ## 0.1.0 — 2026-11-13
 
 First public release.

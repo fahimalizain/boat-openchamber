@@ -71,6 +71,14 @@ export type SandboxAction = 'stop' | 'resume' | 'extend' | 'desktop';
 /** The actions the status section offers, which are the ones a CLI command names. */
 export type SandboxActionVerb = 'stop' | 'resume' | 'extend';
 
+export type SandboxSize = 'small' | 'default' | 'large' | 'xlarge';
+
+export const SANDBOX_SIZES: readonly SandboxSize[] = ['small', 'default', 'large', 'xlarge'];
+
+export const isSandboxSize = (value: string): value is SandboxSize => (
+  (SANDBOX_SIZES as readonly string[]).includes(value)
+);
+
 export const isUpState = (state: string): boolean => (
   state === 'ready' || state === 'idle' || state === 'running'
 );

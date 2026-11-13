@@ -32,6 +32,14 @@ one, or a steer and an interrupt while a turn runs. New events arrive live; a
 running turn also polls as a fallback. Every action ends in a toast, and failures
 show a banner.
 
+**New sandboxes** — the panel's **New sandbox** button opens a form: start from
+an environment, a saved snapshot, or a fork of an existing sandbox; choose a
+size, a name and the auto-stop hours. The form shows the plan's capacity, warns
+before billing, and defaults the environment to the one that matches the open
+project. **Fork** on the selected sandbox opens the same form preset to Fork.
+Creation runs in the background and the new sandbox appears selected when it is
+ready.
+
 **`@` mentions** — type `@` in the composer and pick under **Sandboxes**: a
 conversation becomes a compact transcript (prompts, answers, one line per tool
 call, errors) and a sandbox becomes a summary with its conversation list. The
@@ -51,7 +59,9 @@ A sandbox belongs to the open project when, in priority order:
    `git -C <dir> remote` (origin first) and normalized to `owner/repo`.
 3. Its environment name equals the project folder name, case-insensitive.
 
-With no project open, every sandbox shows.
+With no project open, every sandbox shows. The create form defaults to the
+environment that matches the open project, so a sandbox created from the panel
+lands in it.
 
 ## Privacy
 
@@ -79,9 +89,9 @@ works. Installing an extension never builds it: `service/main.js` and
 shared/    sandbox, conversation and event shapes; route DTOs; transcript; time helpers
 service/   main.ts wires HTTP; boat.ts is the CLI adapter; domain/ typed reads;
            data/ caches; project/ scoping; status/ section; mentions/ rows and text;
-           routes/ one module per route group
-panel/     main.ts bootstraps; api.ts client; state + data + actions + live;
-           views/ header, conversation list, conversation, composer, banner
+           create/ validation and the create job; routes/ one module per route group
+panel/     main.ts bootstraps; api.ts client; state + data + actions + live + create;
+           views/ header, conversation list, conversation, composer, create form, banner
 ```
 
 CI (`.github/workflows/ci.yml`) installs, typechecks, tests, builds, runs the

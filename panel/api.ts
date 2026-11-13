@@ -3,6 +3,9 @@ import type {
   ActionRequest,
   ActionResponse,
   ConversationsResponse,
+  CreateOptionsResponse,
+  CreateSandboxRequest,
+  CreateSandboxResponse,
   HistoryResponse,
   InterruptRequest,
   OkBody,
@@ -31,6 +34,8 @@ export type ServiceClient = {
   steer: (request: SteerRequest) => Promise<OkBody>;
   interrupt: (request: InterruptRequest) => Promise<OkBody>;
   action: (request: ActionRequest) => Promise<ActionResponse>;
+  createOptions: (directory: string | null) => Promise<CreateOptionsResponse>;
+  create: (request: CreateSandboxRequest) => Promise<CreateSandboxResponse>;
 };
 
 const query = (values: Record<string, string>): string => `?${new URLSearchParams(values).toString()}`;
@@ -81,5 +86,10 @@ export const createServiceClient = (host: HostRequester): ServiceClient => {
     steer: (request) => call('POST', '/steer', request),
     interrupt: (request) => call('POST', '/interrupt', request),
     action: (request) => call('POST', '/action', request),
+    createOptions: (directory) => call(
+      'GET',
+      directory ? `/create-options${query({ directory })}` : '/create-options',
+    ),
+    create: (request) => call('POST', '/create', request),
   };
 };

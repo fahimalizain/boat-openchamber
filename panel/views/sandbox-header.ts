@@ -13,6 +13,13 @@ export type SandboxHeader = { render: (state: PanelState) => void };
 
 type Group = 'project' | 'other';
 
+export type SandboxHeaderHandlers = {
+  onSelect: (sandboxId: string) => void;
+  onAction: (action: SandboxAction) => void;
+  onNew: () => void;
+  onFork: () => void;
+};
+
 const hintOf = (sandbox: PanelState['sandboxes'][number]): string => {
   const left = isUpState(sandbox.state) ? remaining(sandbox.archiveAfter) : '';
   return left ? `${sandbox.state} · ${left}` : sandbox.state;
@@ -30,10 +37,7 @@ const metaOf = (sandbox: PanelState['sandboxes'][number]): string => {
 
 export const createSandboxHeader = (
   roots: { groups: HTMLElement; select: HTMLElement; meta: HTMLElement; actions: HTMLElement; live: HTMLElement },
-  handlers: {
-    onSelect: (sandboxId: string) => void;
-    onAction: (action: SandboxAction) => void;
-  },
+  handlers: SandboxHeaderHandlers,
 ): SandboxHeader => {
   let group: Group = 'project';
   let lastState: PanelState | null = null;
@@ -56,6 +60,17 @@ export const createSandboxHeader = (
     onChange: handlers.onSelect,
   });
 
+  const newSandbox = buttonSlot(roots.actions, {
+    label: 'New sandbox',
+    size: 'sm',
+    onClick: handlers.onNew,
+  });
+  const forkSandbox = buttonSlot(roots.actions, {
+    label: 'Fork',
+    size: 'sm',
+    variant: 'outline',
+    onClick: handlers.onFork,
+  });
   const stop = buttonSlot(roots.actions, {
     label: 'Stop',
     size: 'sm',
@@ -79,7 +94,7 @@ export const createSandboxHeader = (
     size: 'sm',
     onClick: () => handlers.onAction('resume'),
   });
-  const buttons = [stop, extend, desktop, resume];
+  const buttons = [newSandbox, forkSandbox, stop, extend, desktop, resume];
 
   function render(state: PanelState): void {
     lastState = state;
@@ -129,6 +144,7 @@ export const createSandboxHeader = (
 
     const up = sandbox ? isUpState(sandbox.state) : false;
     const stopped = sandbox ? isStoppedState(sandbox.state) : false;
+    forkSandbox.slot.hidden = !sandbox;
     stop.slot.hidden = !up;
     extend.slot.hidden = !up;
     desktop.slot.hidden = !up || sandbox?.desktopAvailable !== true;

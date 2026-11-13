@@ -9,6 +9,7 @@ import { createBannerView } from './views/banner.ts';
 import { createComposer } from './views/composer.ts';
 import { createConversationList } from './views/conversation-list.ts';
 import { createConversationView } from './views/conversation-view.ts';
+import { createCreateForm } from './views/create-form.ts';
 import { createSandboxHeader } from './views/sandbox-header.ts';
 
 type Host = ReturnType<typeof connectHost>;
@@ -44,6 +45,11 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
       },
       onAction: (action) => {
         void store.runSandboxAction(action);
+      },
+      onNew: () => store.openCreate('environment'),
+      onFork: () => {
+        const sandboxId = store.getState().sandboxId;
+        if (sandboxId) store.openCreate('fork', sandboxId);
       },
     },
   );
@@ -91,13 +97,45 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
     },
   );
 
+  const createForm = createCreateForm(
+    {
+      source: byId('create-source'),
+      picker: byId('create-picker'),
+      size: byId('create-size'),
+      name: byId('create-name'),
+      hours: byId('create-hours'),
+      capacity: byId('create-capacity'),
+      blocked: byId('create-blocked'),
+      submit: byId('create-submit'),
+      cancel: byId('create-cancel'),
+    },
+    {
+      onSource: (source) => store.setCreateSource(source),
+      onPick: (value) => {
+        const { create } = store.getState();
+        if (create.source === 'environment') store.setCreate({ environment: value });
+        else if (create.source === 'snapshot') store.setCreate({ snapshot: value });
+        else store.setCreate({ fork: value });
+      },
+      onSize: (type) => store.setCreate({ type }),
+      onName: (name) => store.setCreate({ name }),
+      onHours: (hours) => store.setCreate({ autoStopHours: Number.isFinite(hours) ? hours : 0 }),
+      onCreate: () => {
+        void store.submitCreate();
+      },
+      onCancel: store.closeCreate,
+    },
+  );
+
   const render = (): void => {
     const state = store.getState();
+    document.body.dataset.create = state.create.open ? 'true' : 'false';
     banner.render(state.banner);
     header.render(state);
     list.render(state);
     conversation.render(state);
     composer.render(state);
+    createForm.render(state);
   };
   store.subscribe(render);
 

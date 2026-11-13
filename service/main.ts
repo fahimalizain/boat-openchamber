@@ -8,6 +8,7 @@ import { installFollowerCleanup } from './followers.ts';
 import { createRequestContext, sendReply } from './http.ts';
 import { agentRoutes } from './routes/agent.ts';
 import { conversationRoutes } from './routes/conversations.ts';
+import { createRoutes } from './routes/create.ts';
 import { eventRoutes } from './routes/events.ts';
 import { mentionRoutes } from './routes/mentions.ts';
 import { sandboxRoutes } from './routes/sandboxes.ts';
@@ -38,6 +39,7 @@ const route = createRouter([
   ...sandboxRoutes(context),
   ...conversationRoutes(context),
   ...eventRoutes(context),
+  ...createRoutes(context),
   ...agentRoutes(context),
   ...mentionRoutes(context),
   ...scheduleRoutes({

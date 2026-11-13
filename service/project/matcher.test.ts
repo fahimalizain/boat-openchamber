@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import type { Sandbox } from '../../shared/types.ts';
-import { folderNameOf, matchSandbox, PROJECT_LABEL_KEY } from './matcher.ts';
+import { chooseEnvironment, folderNameOf, matchSandbox, PROJECT_LABEL_KEY } from './matcher.ts';
 import { normalizeRepoSlug } from './slug.ts';
 
 const sandbox = (overrides: Partial<Sandbox> = {}): Sandbox => ({
@@ -45,7 +45,7 @@ test('folderNameOf takes the last path segment, lower-case', () => {
 
 test('priority: label, then repo, then environment name', () => {
   const scope = { folderName: 'divine-premiere-uae', repoSlugs: ['code-73/devine-premier-uae'] };
-  const environment = { name: 'base', repos: ['code-73/devine-premier-uae'] };
+  const environment = { name: 'base', repos: ['code-73/devine-premier-uae'], isDefault: true };
 
   const labelled = sandbox({
     environment: 'divine-premiere-uae',
@@ -60,7 +60,7 @@ test('priority: label, then repo, then environment name', () => {
   assert.equal(matchSandbox(byName, null, scope), 'name');
 
   const other = sandbox({ environment: 'base' });
-  assert.equal(matchSandbox(other, { name: 'base', repos: ['other/repo'] }, scope), null);
+  assert.equal(matchSandbox(other, { name: 'base', repos: ['other/repo'], isDefault: true }, scope), null);
 });
 
 test('a label can name the folder instead of a repository', () => {
@@ -70,11 +70,29 @@ test('a label can name the folder instead of a repository', () => {
 });
 
 test('repo matching needs the environment list and a project remote', () => {
-  const environment = { name: 'base', repos: ['owner/repo'] };
+  const environment = { name: 'base', repos: ['owner/repo'], isDefault: true };
   assert.equal(matchSandbox(sandbox(), environment, { folderName: null, repoSlugs: [] }), null);
   assert.equal(
     matchSandbox(sandbox(), environment, { folderName: null, repoSlugs: ['owner/repo'] }),
     'repo',
   );
   assert.equal(matchSandbox(sandbox(), null, { folderName: null, repoSlugs: ['owner/repo'] }), null);
+});
+
+test('chooseEnvironment prefers the project repo, then the folder, then the default', () => {
+  const base = { name: 'base', repos: [], isDefault: true };
+  const project = { name: 'web', repos: ['acme/web'], isDefault: false };
+  const folder = { name: 'landing', repos: [], isDefault: false };
+
+  assert.equal(
+    chooseEnvironment([base, project], { folderName: 'landing', repoSlugs: ['acme/web'] }),
+    'web',
+  );
+  assert.equal(
+    chooseEnvironment([base, folder], { folderName: 'landing', repoSlugs: ['acme/web'] }),
+    'landing',
+  );
+  assert.equal(chooseEnvironment([base, folder], { folderName: null, repoSlugs: [] }), 'base');
+  assert.equal(chooseEnvironment([folder], { folderName: null, repoSlugs: [] }), 'landing');
+  assert.equal(chooseEnvironment([], { folderName: null, repoSlugs: [] }), null);
 });

@@ -229,31 +229,14 @@ var QUOTA_PROVIDER_IDLE_MS = 10 * 60000;
 // node_modules/@openchamber/sdk/dist/service-surface.js
 var SURFACE_CONTROLLERS = ["none", "agent", "user"];
 var CONTROLLERS = new Set(SURFACE_CONTROLLERS);
-// service/data/environment-list.ts
-var createEnvironmentList = (options) => {
-  let entries = [];
-  let loadedAt = 0;
-  let loading = null;
-  const read = async () => {
-    try {
-      entries = await options.load();
-    } catch {}
-    loadedAt = Date.now();
-    return entries;
-  };
-  return {
-    get: async (settings = {}) => {
-      if (!settings.force && loadedAt > 0 && Date.now() - loadedAt < options.ttlMs)
-        return entries;
-      if (loading)
-        return loading;
-      loading = read().finally(() => {
-        loading = null;
-      });
-      return loading;
-    }
-  };
-};
+// service/create/jobs.ts
+import readline from "node:readline";
+
+// service/boat.ts
+import { execFile, spawn } from "node:child_process";
+import { accessSync, constants as fsConstants } from "node:fs";
+import { homedir } from "node:os";
+import { delimiter, join } from "node:path";
 
 // shared/json.ts
 var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -262,10 +245,6 @@ var readNumber = (value) => typeof value === "number" && Number.isFinite(value) 
 var clip = (text, max) => text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
 
 // service/boat.ts
-import { execFile, spawn } from "node:child_process";
-import { accessSync, constants as fsConstants } from "node:fs";
-import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
 class BoatError extends Error {
   code;
   constructor(code, message) {
@@ -367,6 +346,106 @@ var spawnBoat = (command, args) => spawn(requireBinary(), [command, "--json", "-
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true
 });
+
+// service/create/progress.ts
+var parseCreateLine = (value) => {
+  if (!isRecord(value))
+    return null;
+  const event = readString(value.event);
+  const nested = isRecord(value.error) ? value.error : null;
+  return {
+    sandboxId: readString(value.id) ?? readString(value.sandboxId),
+    ready: event === "ready",
+    failure: event === "error" ? readString(nested?.message) ?? readString(value.error) ?? readString(value.message) ?? "The create failed." : null
+  };
+};
+
+// service/create/jobs.ts
+var createCreateJobs = (deps) => {
+  let child = null;
+  const start = (input) => {
+    if (child)
+      throw new BoatError("command-failed", "A sandbox is already being created.");
+    const running = deps.spawn(input);
+    child = running;
+    let sandboxId = null;
+    let failure = null;
+    let stderr = "";
+    deps.emit({ state: "starting" });
+    const stdout = running.stdout;
+    if (!stdout) {
+      running.kill("SIGTERM");
+      child = null;
+      deps.emit({ state: "failed", message: "boat did not open its output." });
+      return;
+    }
+    const lines = readline.createInterface({ input: stdout });
+    lines.on("line", (line) => {
+      const parsed = parseCreateLine(parseBoatJson(line));
+      if (!parsed)
+        return;
+      if (parsed.sandboxId && parsed.sandboxId !== sandboxId) {
+        sandboxId = parsed.sandboxId;
+        deps.onCreated(parsed.sandboxId);
+        deps.emit({ state: "created", sandboxId: parsed.sandboxId });
+      }
+      if (parsed.failure)
+        failure = parsed.failure;
+    });
+    running.stderr?.on("data", (chunk) => {
+      stderr = `${stderr}${String(chunk)}`.slice(-2000);
+    });
+    running.on("error", (error) => {
+      child = null;
+      deps.emit({ state: "failed", message: error.message });
+    });
+    running.on("close", (code) => {
+      child = null;
+      if (failure) {
+        deps.emit({ state: "failed", message: failure });
+        return;
+      }
+      if (code === 0 && sandboxId) {
+        deps.onReady(sandboxId);
+        deps.emit({ state: "ready", sandboxId });
+        return;
+      }
+      if (code === 0) {
+        deps.emit({ state: "failed", message: "boat finished without a sandbox id." });
+        return;
+      }
+      const detail = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-1)[0];
+      deps.emit({ state: "failed", message: detail ?? `boat exited with code ${code ?? "unknown"}.` });
+    });
+  };
+  return { busy: () => child !== null, start };
+};
+
+// service/data/environment-list.ts
+var createEnvironmentList = (options) => {
+  let entries = [];
+  let loadedAt = 0;
+  let loading = null;
+  const read = async () => {
+    try {
+      entries = await options.load();
+    } catch {}
+    loadedAt = Date.now();
+    return entries;
+  };
+  return {
+    get: async (settings = {}) => {
+      if (!settings.force && loadedAt > 0 && Date.now() - loadedAt < options.ttlMs)
+        return entries;
+      if (loading)
+        return loading;
+      loading = read().finally(() => {
+        loading = null;
+      });
+      return loading;
+    }
+  };
+};
 
 // service/domain/conversations.ts
 var listConversations = async (sandboxId) => {
@@ -481,6 +560,28 @@ var readDesktopUrl = async (sandboxId) => {
   const url = readString(data.desktopUrl) ?? readString(data.viewerUrl);
   return url && /^https?:\/\//i.test(url) ? url : null;
 };
+var spawnCreate = (input) => {
+  const args = [];
+  if (input.type)
+    args.push("--type", input.type);
+  if (input.autoStopSeconds)
+    args.push("--ttl", String(input.autoStopSeconds));
+  if (input.source === "fork") {
+    if (!input.fork)
+      throw new BoatError("command-failed", "Pick a sandbox to fork.");
+    return spawnBoat("fork", [...args, "--wait", input.fork]);
+  }
+  if (input.name)
+    args.push("--name", input.name);
+  if (input.source === "environment") {
+    if (!input.environment)
+      throw new BoatError("command-failed", "Pick an environment.");
+    return spawnBoat("new", [...args, "--environment", input.environment]);
+  }
+  if (!input.snapshot)
+    throw new BoatError("command-failed", "Pick a saved snapshot.");
+  return spawnBoat("new", [...args, "--from", input.snapshot]);
+};
 
 // service/data/desktop-links.ts
 var createDesktopLinks = (options) => {
@@ -524,7 +625,37 @@ var createDesktopLinks = (options) => {
   };
 };
 
+// shared/types.ts
+var SANDBOX_SIZES = ["small", "default", "large", "xlarge"];
+var isSandboxSize = (value) => SANDBOX_SIZES.includes(value);
+var isUpState = (state) => state === "ready" || state === "idle" || state === "running";
+var isBootingState = (state) => state === "provisioned" || state === "cloning";
+var isPendingState = (state) => isBootingState(state) || state === "stopping";
+var isStoppedState = (state) => state === "stopped";
+
 // service/domain/limits.ts
+var MAX_TTL_HOURS = 720;
+var TRIAL_TTL_HOURS = 2;
+var autoStopHoursOf = (record) => {
+  const gift = isRecord(record.giftLimit) ? record.giftLimit : null;
+  const giftSeconds = readNumber(gift?.maxTtlSeconds);
+  if (giftSeconds !== null && giftSeconds > 0)
+    return Math.max(1, Math.floor(giftSeconds / 3600));
+  if (readString(record.billingStatus) === "trialing" || readString(record.accessTier) === "trial") {
+    return TRIAL_TTL_HOURS;
+  }
+  return MAX_TTL_HOURS;
+};
+var sizesOf = (record) => {
+  const rows = Array.isArray(record.machineTypes) ? record.machineTypes.filter(isRecord) : [];
+  return SANDBOX_SIZES.map((id) => {
+    const row = rows.find((entry) => readString(entry.type) === id);
+    if (!row)
+      return { id, available: true, reason: null };
+    const available = row.available === true;
+    return { id, available, reason: available ? null : readString(row.reason) };
+  });
+};
 var readLimits = async () => {
   const data = await runBoat("limits", [], { timeoutMs: 15000 });
   const record = isRecord(data) ? data : {};
@@ -532,7 +663,9 @@ var readLimits = async () => {
     canStart: record.canStart !== false,
     blockedReason: readString(record.blockedReason) ?? readString(record.startBlockedReason),
     active: readNumber(record.activeSandboxes),
-    maxActive: readNumber(record.maxActiveSandboxes)
+    maxActive: readNumber(record.maxActiveSandboxes),
+    autoStopMaxHours: autoStopHoursOf(record),
+    sizes: sizesOf(record)
   };
 };
 
@@ -708,13 +841,13 @@ var listEnvironments = async () => {
       const slug = repoOf(entry);
       return slug ? [slug] : [];
     }) : [];
-    summaries.push({ name, repos });
+    summaries.push({ name, repos, isDefault: row.isDefault === true });
   }
   return summaries;
 };
 
 // service/followers.ts
-import readline from "node:readline";
+import readline2 from "node:readline";
 
 // service/domain/events.ts
 var TEXT_MAX = 20000;
@@ -950,7 +1083,7 @@ var createFollowers = (options) => {
       };
       followers.set(key, follower);
       ensureSweeper();
-      const lines = readline.createInterface({ input: stdout });
+      const lines = readline2.createInterface({ input: stdout });
       lines.on("line", (line) => {
         const event = normalizeEvent(parseBoatJson(line), conversationId);
         if (event)
@@ -1010,12 +1143,6 @@ var installFollowerCleanup = (followers) => {
   }
   process.on("exit", () => followers.stopAll());
 };
-
-// shared/types.ts
-var isUpState = (state) => state === "ready" || state === "idle" || state === "running";
-var isBootingState = (state) => state === "provisioned" || state === "cloning";
-var isPendingState = (state) => isBootingState(state) || state === "stopping";
-var isStoppedState = (state) => state === "stopped";
 
 // service/status/text.ts
 var TEXT_MAX2 = 4000;
@@ -1221,6 +1348,17 @@ var matchSandbox = (sandbox, environment, scope) => {
   if (scope.folderName && env === scope.folderName)
     return "name";
   return null;
+};
+var chooseEnvironment = (environments, scope) => {
+  const byRepo = environments.find((environment) => environment.repos.some((repo) => scope.repoSlugs.includes(repo)));
+  if (byRepo)
+    return byRepo.name;
+  if (scope.folderName) {
+    const byName = environments.find((environment) => environment.name.toLowerCase() === scope.folderName);
+    if (byName)
+      return byName.name;
+  }
+  return environments.find((environment) => environment.isDefault)?.name ?? environments[0]?.name ?? null;
 };
 
 // service/project/scope.ts
@@ -1510,11 +1648,27 @@ var createServiceContext = (host) => {
   });
   const followers = createFollowers({ sink: host.emit, ...FOLLOWERS });
   const environments = createEnvironmentList({ ttlMs: TTL.environments, load: listEnvironments });
+  const remotes = createRemoteCache({ ttlMs: TTL.remotes });
   const ranking = createProjectRanking();
-  const scoper = createScoper({
-    environments,
-    remotes: createRemoteCache({ ttlMs: TTL.remotes }),
-    ranking
+  const scoper = createScoper({ environments, remotes, ranking });
+  const forgetSandbox = (sandboxId) => {
+    conversations.forget(sandboxId);
+    agents.forget(sandboxId);
+    desktop.forget(sandboxId);
+  };
+  const createJobs = createCreateJobs({
+    spawn: spawnCreate,
+    emit: (progress) => {
+      host.emit("boat:create", progress).catch(() => {});
+    },
+    onCreated: (sandboxId) => {
+      forgetSandbox(sandboxId);
+      sandboxes.get(true).catch(() => {});
+    },
+    onReady: (sandboxId) => {
+      forgetSandbox(sandboxId);
+      sandboxes.get(true).catch(() => {});
+    }
   });
   return {
     sandboxes,
@@ -1524,6 +1678,9 @@ var createServiceContext = (host) => {
     followers,
     scoper,
     ranking,
+    environments,
+    remotes,
+    createJobs,
     statusView: async (directory) => {
       const snapshot = await sandboxes.get();
       const scope = await scoper.apply(snapshot.sandboxes, directory);
@@ -1543,11 +1700,7 @@ var createServiceContext = (host) => {
       });
     },
     refresh: () => sandboxes.get(true),
-    forget: (sandboxId) => {
-      conversations.forget(sandboxId);
-      agents.forget(sandboxId);
-      desktop.forget(sandboxId);
-    },
+    forget: forgetSandbox,
     perform: performSandboxAction
   };
 };
@@ -1600,7 +1753,7 @@ var AGENT_PROVIDERS = ["claude", "codex", "pi", "opencode", "prime", "kimi", "mi
 var isAgentProvider = (value) => AGENT_PROVIDERS.includes(value);
 
 // service/domain/agent.ts
-import readline2 from "node:readline";
+import readline3 from "node:readline";
 var MUTATION_TIMEOUT_MS2 = 20000;
 var EARLY_RETURN_MS = 2500;
 var promptSandbox = (sandboxId, text, options) => new Promise((resolve, reject) => {
@@ -1638,7 +1791,7 @@ var promptSandbox = (sandboxId, text, options) => new Promise((resolve, reject) 
     const notSignedIn = /not signed in|signed out|session expired|boat login/i.test(message);
     reject(new BoatError(notSignedIn ? "not-signed-in" : "command-failed", message));
   };
-  const lines = readline2.createInterface({ input: stdout });
+  const lines = readline3.createInterface({ input: stdout });
   lines.on("line", (line) => {
     const raw = parseBoatJson(line);
     if (!isRecord(raw))
@@ -1782,6 +1935,141 @@ var conversationRoutes = (deps) => [
     } catch (failure) {
       return context.reply(502, errorBody(describeFailure(failure).text));
     }
+  })
+];
+
+// service/routes/create.ts
+import { isAbsolute as isAbsolute2 } from "node:path";
+
+// service/domain/snapshots.ts
+var listSavedSnapshots = async () => {
+  const data = await runBoat("snapshots", [], { timeoutMs: 20000 });
+  const rows = isRecord(data) && Array.isArray(data.named) ? data.named : [];
+  return rows.filter(isRecord).flatMap((row) => {
+    const name = readString(row.name);
+    if (!name || readString(row.status) !== "ready")
+      return [];
+    return [{ name, type: readString(row.type), createdAt: readString(row.createdAt) }];
+  }).sort((left, right) => (Date.parse(right.createdAt ?? "") || 0) - (Date.parse(left.createdAt ?? "") || 0));
+};
+
+// service/create/request.ts
+var MAX_NAME_CHARS = 120;
+var limitsBlockedReason = (limits) => {
+  if (!limits.canStart)
+    return limits.blockedReason ?? "The plan cannot start a sandbox right now.";
+  if (limits.active !== null && limits.maxActive !== null && limits.active >= limits.maxActive) {
+    return `All ${limits.maxActive} sandbox slots are in use. Stop one first.`;
+  }
+  return null;
+};
+var readCreateRequest = (body, autoStopMaxHours) => {
+  if (!body)
+    return { ok: false, error: "Unknown create request." };
+  const { source } = body;
+  if (source !== "environment" && source !== "snapshot" && source !== "fork") {
+    return { ok: false, error: "Pick where the sandbox comes from." };
+  }
+  const environment = readString(body.environment);
+  const snapshot = readString(body.snapshot);
+  const fork = readString(body.fork);
+  const type = readString(body.type);
+  const name = readString(body.name);
+  const hours = typeof body.autoStopHours === "number" && Number.isFinite(body.autoStopHours) ? body.autoStopHours : 1;
+  if (source === "environment" && !environment)
+    return { ok: false, error: "Pick an environment." };
+  if (source === "snapshot" && !snapshot)
+    return { ok: false, error: "Pick a saved snapshot." };
+  if (source === "fork" && !isSandboxId(fork))
+    return { ok: false, error: "Pick a sandbox to fork." };
+  if (type && !isSandboxSize(type))
+    return { ok: false, error: "Unknown machine size." };
+  if (name && name.length > MAX_NAME_CHARS) {
+    return { ok: false, error: `That name is too long (${MAX_NAME_CHARS} characters).` };
+  }
+  if (!Number.isInteger(hours) || hours < 1 || hours > autoStopMaxHours) {
+    return { ok: false, error: `Auto-stop must be between 1 and ${autoStopMaxHours} hours.` };
+  }
+  return {
+    ok: true,
+    input: {
+      source,
+      environment: source === "environment" ? environment ?? undefined : undefined,
+      snapshot: source === "snapshot" ? snapshot ?? undefined : undefined,
+      fork: source === "fork" ? fork ?? undefined : undefined,
+      type: type ?? undefined,
+      name: source === "fork" ? undefined : name ?? undefined,
+      autoStopSeconds: hours * 3600
+    }
+  };
+};
+
+// service/routes/create.ts
+var createRoutes = (deps) => [
+  route("GET", "/create-options", async (context) => {
+    const directory = context.search.get("directory");
+    try {
+      const [environments, limits, snapshots] = await Promise.all([
+        deps.environments.get().catch(() => []),
+        readLimits(),
+        listSavedSnapshots().catch(() => [])
+      ]);
+      let suggested = environments.find((environment) => environment.isDefault)?.name ?? null;
+      if (directory && isAbsolute2(directory)) {
+        const repoSlugs = await deps.remotes.get(directory).catch(() => []);
+        suggested = chooseEnvironment(environments, { folderName: folderNameOf(directory), repoSlugs }) ?? suggested;
+      }
+      const body = {
+        environments: environments.map((environment) => ({
+          name: environment.name,
+          isDefault: environment.isDefault
+        })),
+        snapshots,
+        limits: {
+          canStart: limits.canStart,
+          reason: limitsBlockedReason(limits),
+          active: limits.active,
+          maxActive: limits.maxActive,
+          autoStopMaxHours: limits.autoStopMaxHours,
+          sizes: limits.sizes
+        },
+        suggestedEnvironment: suggested
+      };
+      return context.reply(200, body);
+    } catch (failure) {
+      return context.reply(502, errorBody(describeFailure(failure).text));
+    }
+  }),
+  route("POST", "/create", async (context) => {
+    const body = await context.json();
+    if (deps.createJobs.busy()) {
+      return context.reply(409, errorBody("A sandbox is already being created."));
+    }
+    let limits;
+    try {
+      limits = await readLimits();
+    } catch (failure) {
+      return context.reply(502, errorBody(describeFailure(failure).text));
+    }
+    const blocked = limitsBlockedReason(limits);
+    if (blocked)
+      return context.reply(409, errorBody(blocked));
+    const request = readCreateRequest(body, limits.autoStopMaxHours);
+    if (!request.ok)
+      return context.reply(400, errorBody(request.error));
+    if (request.input.type) {
+      const size = limits.sizes.find((entry) => entry.id === request.input.type);
+      if (size && !size.available) {
+        return context.reply(409, errorBody(size.reason ?? "That machine size is not available on this plan."));
+      }
+    }
+    try {
+      deps.createJobs.start(request.input);
+    } catch (failure) {
+      return context.reply(502, errorBody(describeFailure(failure).text));
+    }
+    const answer = { accepted: true };
+    return context.reply(200, answer);
   })
 ];
 
@@ -2267,6 +2555,7 @@ var route2 = createRouter([
   ...sandboxRoutes(context),
   ...conversationRoutes(context),
   ...eventRoutes(context),
+  ...createRoutes(context),
   ...agentRoutes(context),
   ...mentionRoutes(context),
   ...scheduleRoutes({

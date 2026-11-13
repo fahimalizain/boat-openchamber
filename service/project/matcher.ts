@@ -49,3 +49,21 @@ export const matchSandbox = (
 
   return null;
 };
+
+/** The environment a new sandbox in this project should start from. */
+export const chooseEnvironment = (
+  environments: EnvironmentSummary[],
+  scope: ProjectScope,
+): string | null => {
+  const byRepo = environments.find((environment) => (
+    environment.repos.some((repo) => scope.repoSlugs.includes(repo))
+  ));
+  if (byRepo) return byRepo.name;
+
+  if (scope.folderName) {
+    const byName = environments.find((environment) => environment.name.toLowerCase() === scope.folderName);
+    if (byName) return byName.name;
+  }
+
+  return environments.find((environment) => environment.isDefault)?.name ?? environments[0]?.name ?? null;
+};

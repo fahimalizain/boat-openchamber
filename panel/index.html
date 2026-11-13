@@ -39,6 +39,21 @@
   .row { margin-top: 8px; }
   .groups { margin-bottom: 6px; }
   .groups[hidden] { display: none; }
+  .create {
+    display: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    flex-direction: column;
+    gap: 8px;
+    padding: 4px 12px 12px;
+    overflow-y: auto;
+  }
+  body[data-create="true"] .create { display: flex; }
+  body[data-create="true"] .block,
+  body[data-create="true"] .chat-wrap,
+  body[data-create="true"] .composer { display: none; }
+  #create-blocked { color: var(--oc-warning-text, inherit); }
+  #create-name[hidden] { display: none; }
   .slot { display: inline-flex; }
   .section-head {
     display: flex; align-items: center; justify-content: space-between;
@@ -100,6 +115,21 @@
     <span id="live" class="live" hidden></span>
   </header>
   <div id="banner" class="banner" hidden><div id="banner-inner"></div></div>
+  <section id="create" class="create">
+    <div class="section-head">
+      <span class="section-title">New sandbox</span>
+      <div id="create-cancel" class="slot-row"></div>
+    </div>
+    <div id="create-source"></div>
+    <div id="create-picker"></div>
+    <div id="create-size"></div>
+    <div id="create-name"></div>
+    <div id="create-hours"></div>
+    <div id="create-capacity" class="meta"></div>
+    <div id="create-blocked" class="hint" hidden></div>
+    <div class="row"><div id="create-submit" class="slot-row"></div></div>
+    <div class="hint">Creating bills the sandbox from the moment it is ready.</div>
+  </section>
   <section class="block">
     <div id="sandbox-groups" class="groups" hidden></div>
     <div id="sandbox-select"></div>

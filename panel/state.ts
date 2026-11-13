@@ -2,6 +2,7 @@
 import type { AgentProvider } from '../shared/agent.ts';
 import type { ScopedSandboxSummary } from '../shared/routes.ts';
 import type { Conversation, UiEvent } from '../shared/types.ts';
+import { initialCreateState, type CreateState } from './create-state.ts';
 
 /** The message a caught failure carries, or a plain fallback. */
 export const messageOf = (failure: unknown): string => (
@@ -33,6 +34,7 @@ export type PanelState = {
   banner: BannerState | null;
   /** The OpenChamber project, handed to the service for the project matcher. */
   directory: string | null;
+  create: CreateState;
 };
 
 export type Toast = (kind: 'info' | 'success' | 'error', message: string) => void;
@@ -54,6 +56,7 @@ export const initialState = (directory: string | null): PanelState => ({
   model: '',
   banner: null,
   directory,
+  create: initialCreateState(),
 });
 
 export type Cell = {

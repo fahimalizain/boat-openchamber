@@ -1,13 +1,14 @@
 /** Composes the panel's state cell, loaders, actions and live feed behind one API. */
 import { createActions, type Actions } from './actions.ts';
 import type { ServiceClient } from './api.ts';
+import { createCreateActions, type CreateActions } from './create.ts';
 import { createLoaders } from './data.ts';
 import { createLive, type Live } from './live.ts';
 import { createCell, createReporter, initialState, type PanelState } from './state.ts';
 
 export type { BannerState, PanelState } from './state.ts';
 
-export type Store = Actions & Live & {
+export type Store = Actions & CreateActions & Live & {
   getState: () => PanelState;
   subscribe: (listener: () => void) => () => void;
 };
@@ -29,10 +30,25 @@ export const createStore = (options: {
     toast: options.toast,
     openUrl: options.openUrl,
   });
-  const live = createLive({ cell, client: options.client, loaders, reporter });
+  const create = createCreateActions({
+    cell,
+    client: options.client,
+    toast: options.toast,
+    reporter,
+    refreshSandboxes: loaders.sandboxes,
+    selectSandbox: actions.selectSandbox,
+  });
+  const live = createLive({
+    cell,
+    client: options.client,
+    loaders,
+    reporter,
+    onCreate: create.handleCreateProgress,
+  });
 
   return {
     ...actions,
+    ...create,
     ...live,
     getState: cell.get,
     subscribe: cell.subscribe,

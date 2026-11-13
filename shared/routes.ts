@@ -5,6 +5,7 @@ import type {
   ProjectMatch,
   SandboxAction,
   SandboxActionVerb,
+  SandboxSize,
   SandboxSummary,
   UiEvent,
 } from './types.ts';
@@ -36,6 +37,57 @@ export type HistoryResponse = {
   events: UiEvent[];
   running: boolean | null;
   now: number;
+};
+
+export type CreateSource = 'environment' | 'snapshot' | 'fork';
+
+export type CreateEnvironment = { name: string; isDefault: boolean };
+
+export type CreateSnapshot = {
+  name: string;
+  type: string | null;
+  createdAt: string | null;
+};
+
+export type CreateSize = {
+  id: SandboxSize;
+  available: boolean;
+  reason: string | null;
+};
+
+export type CreateLimits = {
+  canStart: boolean;
+  reason: string | null;
+  active: number | null;
+  maxActive: number | null;
+  /** The plan's cap on an auto-stop lifetime, in hours. */
+  autoStopMaxHours: number;
+  sizes: CreateSize[];
+};
+
+export type CreateOptionsResponse = {
+  environments: CreateEnvironment[];
+  snapshots: CreateSnapshot[];
+  limits: CreateLimits;
+  suggestedEnvironment: string | null;
+};
+
+export type CreateSandboxRequest = {
+  source: CreateSource;
+  environment?: string;
+  snapshot?: string;
+  fork?: string;
+  type?: SandboxSize;
+  name?: string;
+  autoStopHours?: number;
+};
+
+export type CreateSandboxResponse = { accepted: true };
+
+export type CreateProgress = {
+  state: 'starting' | 'created' | 'ready' | 'failed';
+  sandboxId?: string;
+  message?: string;
 };
 
 export type WatchRequest = { sandbox: string; conversation: string };
