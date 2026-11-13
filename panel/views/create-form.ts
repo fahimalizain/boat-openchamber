@@ -1,54 +1,32 @@
-/** The create form: source, what to start from, size, name and auto-stop. */
-import { mountSelect, mountTabs, mountTextField, type SelectOption } from '@openchamber/sdk/ui';
+/** The create form: start from, environment, size, name and auto-stop. */
+import { mountSelect, mountTextField } from '@openchamber/sdk/ui';
 
-import { isSandboxSize, type SandboxSize } from '../../shared/types.ts';
-import { blockedReason, hoursMax, sizeOptions, type CreateState } from '../create-state.ts';
+import type { CreateStartKind } from '../../shared/routes.ts';
+import {
+  blockedReason,
+  environmentOptions,
+  hoursMax,
+  sizeOptions,
+  snapshotHint,
+  startOptions,
+  type CreateState,
+} from '../create-state.ts';
 import { buttonSlot } from '../kit.ts';
 import type { PanelState } from '../store.ts';
 
 export type CreateFormView = { render: (state: PanelState) => void };
 
-const SOURCE_TABS = [
-  { id: 'environment', label: 'Environment' },
-  { id: 'snapshot', label: 'Snapshot' },
-  { id: 'fork', label: 'Fork' },
-];
-
-const pickerLabel = (source: CreateState['source']): string => (
-  source === 'environment' ? 'Environment' : source === 'snapshot' ? 'Saved snapshot' : 'Sandbox to fork'
+const isStartKind = (value: string): value is CreateStartKind => (
+  value === 'clean' || value === 'snapshot' || value === 'copy'
 );
-
-const pickerValue = (form: CreateState): string | null => (
-  form.source === 'environment' ? form.environment : form.source === 'snapshot' ? form.snapshot : form.fork
-);
-
-const pickerOptions = (state: PanelState): SelectOption[] => {
-  const form = state.create;
-  if (form.source === 'environment') {
-    return (form.options?.environments ?? []).map((environment) => ({
-      id: environment.name,
-      label: environment.name,
-      ...(environment.isDefault ? { hint: 'default' } : {}),
-    }));
-  }
-  if (form.source === 'snapshot') {
-    return (form.options?.snapshots ?? []).map((snapshot) => ({
-      id: snapshot.name,
-      label: snapshot.name,
-      ...(snapshot.type ? { hint: snapshot.type } : {}),
-    }));
-  }
-  return state.sandboxes.map((sandbox) => ({
-    id: sandbox.id,
-    label: sandbox.name || sandbox.id,
-    hint: sandbox.state,
-  }));
-};
 
 export const createCreateForm = (
   roots: {
-    source: HTMLElement;
-    picker: HTMLElement;
+    start: HTMLElement;
+    startHint: HTMLElement;
+    snapshot: HTMLElement;
+    copy: HTMLElement;
+    environment: HTMLElement;
     size: HTMLElement;
     name: HTMLElement;
     hours: HTMLElement;
@@ -58,48 +36,67 @@ export const createCreateForm = (
     cancel: HTMLElement;
   },
   handlers: {
-    onSource: (source: CreateState['source']) => void;
-    onPick: (value: string) => void;
-    onSize: (size: SandboxSize) => void;
-    onName: (value: string) => void;
-    onHours: (value: number) => void;
+    onStart: (start: CreateStartKind) => void;
+    onSnapshot: (name: string) => void;
+    onCopy: (sandboxId: string) => void;
+    onEnvironment: (environment: string) => void;
+    onSize: (value: string) => void;
+    onName: (name: string) => void;
+    onHours: (hours: number) => void;
     onCreate: () => void;
     onCancel: () => void;
   },
 ): CreateFormView => {
-  const tabs = mountTabs(roots.source, {
-    items: SOURCE_TABS,
-    activeId: 'environment',
+  const start = mountSelect(roots.start, {
+    label: 'Start from',
+    value: 'clean',
+    options: [],
     onChange: (id) => {
-      if (id === 'environment' || id === 'snapshot' || id === 'fork') handlers.onSource(id);
+      if (isStartKind(id)) handlers.onStart(id);
     },
   });
 
-  const picker = mountSelect(roots.picker, {
+  const snapshot = mountSelect(roots.snapshot, {
+    label: 'Snapshot',
     value: null,
     options: [],
-    placeholder: 'Choose…',
+    placeholder: 'Pick a snapshot',
+    onChange: handlers.onSnapshot,
+  });
+
+  const copy = mountSelect(roots.copy, {
+    label: 'Sandbox',
+    value: null,
+    options: [],
+    placeholder: 'Pick a sandbox',
     searchable: true,
-    onChange: handlers.onPick,
+    onChange: handlers.onCopy,
+  });
+
+  const environment = mountSelect(roots.environment, {
+    label: 'Environment',
+    value: null,
+    options: [],
+    onChange: handlers.onEnvironment,
   });
 
   const size = mountSelect(roots.size, {
+    label: 'Size',
     value: 'default',
     options: [],
-    onChange: (id) => {
-      if (isSandboxSize(id)) handlers.onSize(id);
-    },
+    onChange: handlers.onSize,
   });
 
   const name = mountTextField(roots.name, {
+    label: 'Name',
     value: '',
     placeholder: 'Sandbox name (optional)',
     onChange: handlers.onName,
   });
 
   const hours = mountTextField(roots.hours, {
+    label: 'Auto-stop after',
     value: '1',
-    placeholder: '1',
     onChange: (value) => handlers.onHours(Number(value)),
   });
 
@@ -117,47 +114,75 @@ export const createCreateForm = (
   });
 
   const render = (state: PanelState): void => {
-    const form = state.create;
+    const form: CreateState = state.create;
     const options = form.options;
     const busy = form.loading || form.busy;
 
-    tabs.update({ items: SOURCE_TABS, activeId: form.source });
+    start.update({
+      value: form.start,
+      options: startOptions(options, state.sandboxes),
+      disabled: busy,
+    });
 
-    picker.update({
-      label: pickerLabel(form.source),
-      value: pickerValue(form),
-      options: pickerOptions(state),
-      placeholder: form.loading ? 'Loading…' : 'Choose…',
+    const noSnapshots = options !== null && options.snapshots.length === 0;
+    roots.startHint.hidden = !(noSnapshots && form.start === 'snapshot');
+    roots.startHint.textContent = noSnapshots
+      ? 'No saved snapshots yet. Save one with `boat snapshot <id> <name>`.'
+      : '';
+
+    roots.snapshot.hidden = form.start !== 'snapshot';
+    snapshot.update({
+      value: form.snapshot,
+      options: (options?.snapshots ?? []).map((saved) => ({
+        id: saved.name,
+        label: saved.name,
+        ...(snapshotHint(saved) ? { hint: snapshotHint(saved) } : {}),
+      })),
+      disabled: busy,
+    });
+
+    roots.copy.hidden = form.start !== 'copy';
+    copy.update({
+      value: form.copyFrom,
+      options: state.sandboxes.map((sandbox) => ({
+        id: sandbox.id,
+        label: sandbox.name || sandbox.id,
+        hint: sandbox.state,
+      })),
+      disabled: busy,
+    });
+
+    environment.update({
+      label: 'Environment',
+      value: form.start === 'copy' ? form.environment ?? 'inherit' : form.environment,
+      options: environmentOptions(form, options, state.sandboxes),
       disabled: busy,
     });
 
     size.update({
-      value: form.type,
-      options: sizeOptions(options),
+      value: form.size ?? (form.start === 'copy' ? 'source' : 'default'),
+      options: sizeOptions(form, options),
       disabled: busy,
     });
 
-    roots.name.hidden = form.source === 'fork';
     name.update({
       value: form.name,
-      placeholder: 'Sandbox name (optional)',
-      helper: form.source === 'fork' ? undefined : 'Up to 120 characters',
       disabled: form.busy,
     });
 
     hours.update({
       value: String(form.autoStopHours),
-      helper: `1–${hoursMax(options)} hours`,
+      helper: `Hours · up to ${hoursMax(options)}`,
       disabled: form.busy,
     });
 
     roots.capacity.textContent = options
-      ? `${options.limits.active ?? 0} of ${options.limits.maxActive ?? '?'} sandboxes in use`
+      ? `${options.limits.active ?? 0} of ${options.limits.maxActive ?? '?'} sandboxes running`
       : form.loading
         ? 'Reading the plan…'
         : 'The plan could not be read.';
 
-    const blocked = blockedReason(form, options);
+    const blocked = blockedReason(form, options, state.sandboxes);
     roots.blocked.textContent = blocked ?? '';
     roots.blocked.hidden = !blocked;
 

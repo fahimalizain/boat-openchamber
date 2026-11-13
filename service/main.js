@@ -366,6 +366,18 @@ var parseCreateLine = (value) => {
 // service/create/jobs.ts
 var createCreateJobs = (deps) => {
   let child = null;
+  const finish = async (input, sandboxId) => {
+    let warning = null;
+    if (input.start.kind === "copy" && input.name) {
+      try {
+        await deps.rename(sandboxId, input.name);
+      } catch (failure) {
+        warning = `Created, but not renamed: ${failure instanceof Error ? failure.message : "unknown error"}`;
+      }
+    }
+    deps.onReady(sandboxId);
+    deps.emit({ state: "ready", sandboxId, ...warning ? { message: warning } : {} });
+  };
   const start = (input) => {
     if (child)
       throw new BoatError("command-failed", "A sandbox is already being created.");
@@ -409,8 +421,7 @@ var createCreateJobs = (deps) => {
         return;
       }
       if (code === 0 && sandboxId) {
-        deps.onReady(sandboxId);
-        deps.emit({ state: "ready", sandboxId });
+        finish(input, sandboxId);
         return;
       }
       if (code === 0) {
@@ -496,6 +507,27 @@ var createConversationList = (options) => {
   };
 };
 
+// service/create/argv.ts
+var createCommand = (input) => {
+  const args = [];
+  if (input.size)
+    args.push("--type", input.size);
+  if (input.autoStopSeconds)
+    args.push("--ttl", String(input.autoStopSeconds));
+  if (input.start.kind === "copy") {
+    if (input.environment)
+      args.push("--environment", input.environment);
+    return { command: "fork", args: [...args, "--wait", input.start.sandboxId] };
+  }
+  if (input.name)
+    args.push("--name", input.name);
+  if (input.environment)
+    args.push("--environment", input.environment);
+  if (input.start.kind === "snapshot")
+    args.push("--from", input.start.name);
+  return { command: "new", args };
+};
+
 // service/domain/sandboxes.ts
 var MUTATION_TIMEOUT_MS = 25000;
 var readLabels = (value) => {
@@ -564,26 +596,11 @@ var readDesktopUrl = async (sandboxId) => {
   return url && /^https?:\/\//i.test(url) ? url : null;
 };
 var spawnCreate = (input) => {
-  const args = [];
-  if (input.type)
-    args.push("--type", input.type);
-  if (input.autoStopSeconds)
-    args.push("--ttl", String(input.autoStopSeconds));
-  if (input.source === "fork") {
-    if (!input.fork)
-      throw new BoatError("command-failed", "Pick a sandbox to fork.");
-    return spawnBoat("fork", [...args, "--wait", input.fork]);
-  }
-  if (input.name)
-    args.push("--name", input.name);
-  if (input.source === "environment") {
-    if (!input.environment)
-      throw new BoatError("command-failed", "Pick an environment.");
-    return spawnBoat("new", [...args, "--environment", input.environment]);
-  }
-  if (!input.snapshot)
-    throw new BoatError("command-failed", "Pick a saved snapshot.");
-  return spawnBoat("new", [...args, "--from", input.snapshot]);
+  const { command, args } = createCommand(input);
+  return spawnBoat(command, args);
+};
+var renameSandbox = async (sandboxId, name) => {
+  await runBoat("rename", [sandboxId, name], { timeoutMs: 20000 });
 };
 
 // service/data/desktop-links.ts
@@ -1819,6 +1836,7 @@ var createServiceContext = (host) => {
   };
   const createJobs = createCreateJobs({
     spawn: spawnCreate,
+    rename: renameSandbox,
     emit: (progress) => {
       host.emit("boat:create", progress).catch(() => {});
     },
@@ -2111,7 +2129,12 @@ var listSavedSnapshots = async () => {
     const name = readString(row.name);
     if (!name || readString(row.status) !== "ready")
       return [];
-    return [{ name, type: readString(row.type), createdAt: readString(row.createdAt) }];
+    return [{
+      name,
+      type: readString(row.type),
+      createdAt: readString(row.createdAt),
+      sizeBytes: readNumber(row.sizeBytes)
+    }];
   }).sort((left, right) => (Date.parse(right.createdAt ?? "") || 0) - (Date.parse(left.createdAt ?? "") || 0));
 };
 
@@ -2125,26 +2148,31 @@ var limitsBlockedReason = (limits) => {
   }
   return null;
 };
+var readStart = (body) => {
+  const start = body.start;
+  if (start?.kind === "clean")
+    return { kind: "clean" };
+  if (start?.kind === "snapshot") {
+    const name = readString(start.name);
+    return name ? { kind: "snapshot", name } : { error: "Pick a saved snapshot." };
+  }
+  if (start?.kind === "copy") {
+    const sandboxId = readString(start.sandboxId);
+    return isSandboxId(sandboxId) ? { kind: "copy", sandboxId } : { error: "Pick a sandbox to copy." };
+  }
+  return { error: "Pick what the sandbox starts from." };
+};
 var readCreateRequest = (body, autoStopMaxHours) => {
   if (!body)
     return { ok: false, error: "Unknown create request." };
-  const { source } = body;
-  if (source !== "environment" && source !== "snapshot" && source !== "fork") {
-    return { ok: false, error: "Pick where the sandbox comes from." };
-  }
+  const start = readStart(body);
+  if ("error" in start)
+    return { ok: false, error: start.error };
   const environment = readString(body.environment);
-  const snapshot = readString(body.snapshot);
-  const fork = readString(body.fork);
-  const type = readString(body.type);
+  const size = readString(body.size);
   const name = readString(body.name);
   const hours = typeof body.autoStopHours === "number" && Number.isFinite(body.autoStopHours) ? body.autoStopHours : 1;
-  if (source === "environment" && !environment)
-    return { ok: false, error: "Pick an environment." };
-  if (source === "snapshot" && !snapshot)
-    return { ok: false, error: "Pick a saved snapshot." };
-  if (source === "fork" && !isSandboxId(fork))
-    return { ok: false, error: "Pick a sandbox to fork." };
-  if (type && !isSandboxSize(type))
+  if (size && !isSandboxSize(size))
     return { ok: false, error: "Unknown machine size." };
   if (name && name.length > MAX_NAME_CHARS) {
     return { ok: false, error: `That name is too long (${MAX_NAME_CHARS} characters).` };
@@ -2155,12 +2183,10 @@ var readCreateRequest = (body, autoStopMaxHours) => {
   return {
     ok: true,
     input: {
-      source,
-      environment: source === "environment" ? environment ?? undefined : undefined,
-      snapshot: source === "snapshot" ? snapshot ?? undefined : undefined,
-      fork: source === "fork" ? fork ?? undefined : undefined,
-      type: type ?? undefined,
-      name: source === "fork" ? undefined : name ?? undefined,
+      start,
+      environment: environment ?? undefined,
+      size: size ?? undefined,
+      name: name ?? undefined,
       autoStopSeconds: hours * 3600
     }
   };
@@ -2219,8 +2245,8 @@ var createRoutes = (deps) => [
     const request = readCreateRequest(body, limits.autoStopMaxHours);
     if (!request.ok)
       return context.reply(400, errorBody(request.error));
-    if (request.input.type) {
-      const size = limits.sizes.find((entry) => entry.id === request.input.type);
+    if (request.input.size) {
+      const size = limits.sizes.find((entry) => entry.id === request.input.size);
       if (size && !size.available) {
         return context.reply(409, errorBody(size.reason ?? "That machine size is not available on this plan."));
       }

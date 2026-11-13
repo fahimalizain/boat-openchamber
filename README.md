@@ -32,13 +32,14 @@ one, or a steer and an interrupt while a turn runs. New events arrive live; a
 running turn also polls as a fallback. Every action ends in a toast, and failures
 show a banner.
 
-**New sandboxes** — the panel's **New sandbox** button opens a form: start from
-an environment, a saved snapshot, or a fork of an existing sandbox; choose a
-size, a name and the auto-stop hours. The form shows the plan's capacity, warns
-before billing, and defaults the environment to the one that matches the open
-project. **Fork** on the selected sandbox opens the same form preset to Fork.
+**New sandboxes** — the panel's **New sandbox** button opens a form with two
+independent choices: **Start from** a clean machine, a saved snapshot, or a copy
+of an existing sandbox; and an **Environment**, which injects repos, secrets and
+credentials (the account default, the project's matched environment, or for a
+copy the source's own). Pick a size with its specs, a name and the auto-stop
+hours. Copies are renamed after they start because `boat fork` has no name flag.
 Creation runs in the background and the new sandbox appears selected when it is
-ready.
+ready. **Copy** on the selected sandbox opens the same form preset to a copy.
 
 **`@` mentions** — type `@` in the composer and pick under **Sandboxes**: a
 conversation becomes a compact transcript (prompts, answers, one line per tool

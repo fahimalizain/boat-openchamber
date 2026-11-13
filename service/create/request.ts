@@ -1,8 +1,8 @@
 /** Validates a create request and turns it into the CLI's input. */
 import { readString } from '../../shared/json.ts';
-import type { CreateSandboxRequest } from '../../shared/routes.ts';
+import type { CreateSandboxRequest, CreateStart } from '../../shared/routes.ts';
 import { isSandboxSize, type SandboxSize } from '../../shared/types.ts';
-import type { CreateInput } from '../domain/sandboxes.ts';
+import type { CreateInput } from './argv.ts';
 import type { PlanLimits } from '../domain/limits.ts';
 import { isSandboxId } from '../validation.ts';
 
@@ -20,29 +20,42 @@ export const limitsBlockedReason = (limits: PlanLimits): string | null => {
   return null;
 };
 
+const readStart = (body: CreateSandboxRequest): CreateStart | { error: string } => {
+  const start = body.start;
+  if (start?.kind === 'clean') return { kind: 'clean' };
+
+  if (start?.kind === 'snapshot') {
+    const name = readString(start.name);
+    return name ? { kind: 'snapshot', name } : { error: 'Pick a saved snapshot.' };
+  }
+
+  if (start?.kind === 'copy') {
+    const sandboxId = readString(start.sandboxId);
+    return isSandboxId(sandboxId)
+      ? { kind: 'copy', sandboxId }
+      : { error: 'Pick a sandbox to copy.' };
+  }
+
+  return { error: 'Pick what the sandbox starts from.' };
+};
+
 export const readCreateRequest = (
   body: CreateSandboxRequest | null,
   autoStopMaxHours: number,
 ): CreateRequestResult => {
   if (!body) return { ok: false, error: 'Unknown create request.' };
-  const { source } = body;
-  if (source !== 'environment' && source !== 'snapshot' && source !== 'fork') {
-    return { ok: false, error: 'Pick where the sandbox comes from.' };
-  }
+
+  const start = readStart(body);
+  if ('error' in start) return { ok: false, error: start.error };
 
   const environment = readString(body.environment);
-  const snapshot = readString(body.snapshot);
-  const fork = readString(body.fork);
-  const type = readString(body.type);
+  const size = readString(body.size);
   const name = readString(body.name);
   const hours = typeof body.autoStopHours === 'number' && Number.isFinite(body.autoStopHours)
     ? body.autoStopHours
     : 1;
 
-  if (source === 'environment' && !environment) return { ok: false, error: 'Pick an environment.' };
-  if (source === 'snapshot' && !snapshot) return { ok: false, error: 'Pick a saved snapshot.' };
-  if (source === 'fork' && !isSandboxId(fork)) return { ok: false, error: 'Pick a sandbox to fork.' };
-  if (type && !isSandboxSize(type)) return { ok: false, error: 'Unknown machine size.' };
+  if (size && !isSandboxSize(size)) return { ok: false, error: 'Unknown machine size.' };
   if (name && name.length > MAX_NAME_CHARS) {
     return { ok: false, error: `That name is too long (${MAX_NAME_CHARS} characters).` };
   }
@@ -53,13 +66,10 @@ export const readCreateRequest = (
   return {
     ok: true,
     input: {
-      source,
-      environment: source === 'environment' ? environment ?? undefined : undefined,
-      snapshot: source === 'snapshot' ? snapshot ?? undefined : undefined,
-      fork: source === 'fork' ? fork ?? undefined : undefined,
-      type: (type as SandboxSize | null) ?? undefined,
-      // A fork keeps its generated name; `boat fork` has no `--name`.
-      name: source === 'fork' ? undefined : name ?? undefined,
+      start,
+      environment: environment ?? undefined,
+      size: (size as SandboxSize | null) ?? undefined,
+      name: name ?? undefined,
       autoStopSeconds: hours * 3_600,
     },
   };

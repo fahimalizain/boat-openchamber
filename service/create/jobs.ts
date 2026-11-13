@@ -4,7 +4,7 @@ import type { ChildProcess } from 'node:child_process';
 
 import type { CreateProgress } from '../../shared/routes.ts';
 import { BoatError, parseBoatJson } from '../boat.ts';
-import type { CreateInput } from '../domain/sandboxes.ts';
+import type { CreateInput } from './argv.ts';
 import { parseCreateLine } from './progress.ts';
 
 export type CreateJobs = {
@@ -14,11 +14,25 @@ export type CreateJobs = {
 
 export const createCreateJobs = (deps: {
   spawn: (input: CreateInput) => ChildProcess;
+  rename: (sandboxId: string, name: string) => Promise<void>;
   emit: (progress: CreateProgress) => void;
   onCreated: (sandboxId: string) => void;
   onReady: (sandboxId: string) => void;
 }): CreateJobs => {
   let child: ChildProcess | null = null;
+
+  const finish = async (input: CreateInput, sandboxId: string): Promise<void> => {
+    let warning: string | null = null;
+    if (input.start.kind === 'copy' && input.name) {
+      try {
+        await deps.rename(sandboxId, input.name);
+      } catch (failure) {
+        warning = `Created, but not renamed: ${failure instanceof Error ? failure.message : 'unknown error'}`;
+      }
+    }
+    deps.onReady(sandboxId);
+    deps.emit({ state: 'ready', sandboxId, ...(warning ? { message: warning } : {}) });
+  };
 
   const start = (input: CreateInput): void => {
     if (child) throw new BoatError('command-failed', 'A sandbox is already being created.');
@@ -67,8 +81,7 @@ export const createCreateJobs = (deps: {
         return;
       }
       if (code === 0 && sandboxId) {
-        deps.onReady(sandboxId);
-        deps.emit({ state: 'ready', sandboxId });
+        void finish(input, sandboxId);
         return;
       }
       if (code === 0) {

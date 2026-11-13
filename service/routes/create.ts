@@ -78,8 +78,8 @@ export const createRoutes = (deps: Deps): Route[] => [
     const request = readCreateRequest(body, limits.autoStopMaxHours);
     if (!request.ok) return context.reply(400, errorBody(request.error));
 
-    if (request.input.type) {
-      const size = limits.sizes.find((entry) => entry.id === request.input.type);
+    if (request.input.size) {
+      const size = limits.sizes.find((entry) => entry.id === request.input.size);
       if (size && !size.available) {
         return context.reply(409, errorBody(size.reason ?? 'That machine size is not available on this plan.'));
       }

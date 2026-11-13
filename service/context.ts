@@ -11,7 +11,7 @@ import { createProjectRegistry, type ProjectRegistry } from './data/project-regi
 import { createRunningAgents, type RunningAgents } from './data/running-agents.ts';
 import { createSandboxList, type SandboxList, type SandboxSnapshot } from './data/sandbox-list.ts';
 import { listEnvironments } from './domain/environments.ts';
-import { listSandboxes, spawnCreate } from './domain/sandboxes.ts';
+import { listSandboxes, renameSandbox, spawnCreate } from './domain/sandboxes.ts';
 import { createFollowers, type EventSink, type Followers } from './followers.ts';
 import { createInstructionsWriter } from './instructions.ts';
 import { createMarker, type Marker } from './marks/marker.ts';
@@ -94,6 +94,7 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
 
   const createJobs = createCreateJobs({
     spawn: spawnCreate,
+    rename: renameSandbox,
     emit: (progress) => {
       void host.emit('boat:create', progress).catch(() => {});
     },

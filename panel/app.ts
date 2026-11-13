@@ -62,10 +62,10 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
       onAction: (action) => {
         void store.runSandboxAction(action);
       },
-      onNew: () => store.openCreate('environment'),
-      onFork: () => {
+      onNew: () => store.openCreate('clean'),
+      onCopy: () => {
         const sandboxId = store.getState().sandboxId;
-        if (sandboxId) store.openCreate('fork', sandboxId);
+        if (sandboxId) store.openCreate('copy', sandboxId);
       },
     },
   );
@@ -115,8 +115,11 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
 
   const createForm = createCreateForm(
     {
-      source: byId('create-source'),
-      picker: byId('create-picker'),
+      start: byId('create-start'),
+      startHint: byId('create-start-hint'),
+      snapshot: byId('create-snapshot'),
+      copy: byId('create-copy'),
+      environment: byId('create-environment'),
       size: byId('create-size'),
       name: byId('create-name'),
       hours: byId('create-hours'),
@@ -126,16 +129,13 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
       cancel: byId('create-cancel'),
     },
     {
-      onSource: (source) => store.setCreateSource(source),
-      onPick: (value) => {
-        const { create } = store.getState();
-        if (create.source === 'environment') store.setCreate({ environment: value });
-        else if (create.source === 'snapshot') store.setCreate({ snapshot: value });
-        else store.setCreate({ fork: value });
-      },
-      onSize: (type) => store.setCreate({ type }),
-      onName: (name) => store.setCreate({ name }),
-      onHours: (hours) => store.setCreate({ autoStopHours: Number.isFinite(hours) ? hours : 0 }),
+      onStart: store.setCreateStart,
+      onSnapshot: store.setCreateSnapshot,
+      onCopy: store.setCreateCopy,
+      onEnvironment: store.setCreateEnvironment,
+      onSize: store.setCreateSize,
+      onName: store.setCreateName,
+      onHours: store.setCreateHours,
       onCreate: () => {
         void store.submitCreate();
       },

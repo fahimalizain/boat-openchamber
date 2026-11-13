@@ -49,7 +49,9 @@
     overflow-y: auto;
   }
   #create-blocked { color: var(--oc-warning-text, inherit); }
-  #create-name[hidden] { display: none; }
+  #create-snapshot[hidden], #create-copy[hidden],
+  #create-start-hint[hidden], #create-blocked[hidden] { display: none; }
+  .create-capacity { font-size: 12px; color: var(--oc-muted, inherit); }
   .compact-nav { display: none; padding: 0 12px 6px; }
   .slot { display: inline-flex; }
   .section-head {
@@ -139,6 +141,7 @@
 
   /* The create form takes the whole panel. Last, so it beats the compact rules. */
   body[data-create="true"] #root .create { display: flex; }
+  body[data-create="true"] #root .head,
   body[data-create="true"] #root .block,
   body[data-create="true"] #root .chat-wrap,
   body[data-create="true"] #root .composer,
@@ -157,15 +160,19 @@
       <span class="section-title">New sandbox</span>
       <div id="create-cancel" class="slot-row"></div>
     </div>
-    <div id="create-source"></div>
-    <div id="create-picker"></div>
+    <div id="create-start"></div>
+    <div id="create-start-hint" class="hint" hidden></div>
+    <div id="create-snapshot"></div>
+    <div id="create-copy"></div>
+    <div id="create-environment"></div>
+    <div id="create-env-hint" class="hint">Repos, secrets and credentials to inject.</div>
     <div id="create-size"></div>
     <div id="create-name"></div>
     <div id="create-hours"></div>
-    <div id="create-capacity" class="meta"></div>
+    <div id="create-capacity" class="create-capacity"></div>
     <div id="create-blocked" class="hint" hidden></div>
     <div class="row"><div id="create-submit" class="slot-row"></div></div>
-    <div class="hint">Creating bills the sandbox from the moment it is ready.</div>
+    <div class="hint">Billed per second while running.</div>
   </section>
   <section class="block">
     <div id="sandbox-groups" class="groups" hidden></div>

@@ -1,10 +1,10 @@
 /** Sandbox reads and lifecycle commands, mapped into the shared shape. */
-import { isRecord, readNumber, readString } from '../../shared/json.ts';
-import type { CreateSource } from '../../shared/routes.ts';
-import type { Sandbox, SandboxSize } from '../../shared/types.ts';
-import { BoatError, runBoat, spawnBoat } from '../boat.ts';
 import type { ChildProcess } from 'node:child_process';
 
+import { isRecord, readNumber, readString } from '../../shared/json.ts';
+import type { Sandbox } from '../../shared/types.ts';
+import { BoatError, runBoat, spawnBoat } from '../boat.ts';
+import { createCommand, type CreateInput } from '../create/argv.ts';
 const MUTATION_TIMEOUT_MS = 25_000;
 
 const readLabels = (value: unknown): Record<string, string> => {
@@ -85,37 +85,13 @@ export const readDesktopUrl = async (sandboxId: string): Promise<string | null> 
   return url && /^https?:\/\//i.test(url) ? url : null;
 };
 
-export type CreateInput = {
-  source: CreateSource;
-  environment?: string;
-  snapshot?: string;
-  fork?: string;
-  type?: SandboxSize;
-  name?: string;
-  autoStopSeconds?: number;
+/** Starts `boat new` or `boat fork --wait`; the JSONL events are read by `create/jobs.ts`. */export const spawnCreate = (input: CreateInput): ChildProcess => {
+  const { command, args } = createCommand(input);
+  return spawnBoat(command, args);
 };
 
-/**
- * Starts `boat new` or `boat fork --wait`. The JSONL events it prints are read
- * by `service/create/jobs.ts`; this only builds the argv.
- */
-export const spawnCreate = (input: CreateInput): ChildProcess => {
-  const args: string[] = [];
-  if (input.type) args.push('--type', input.type);
-  if (input.autoStopSeconds) args.push('--ttl', String(input.autoStopSeconds));
-
-  if (input.source === 'fork') {
-    if (!input.fork) throw new BoatError('command-failed', 'Pick a sandbox to fork.');
-    return spawnBoat('fork', [...args, '--wait', input.fork]);
-  }
-
-  if (input.name) args.push('--name', input.name);
-  if (input.source === 'environment') {
-    if (!input.environment) throw new BoatError('command-failed', 'Pick an environment.');
-    return spawnBoat('new', [...args, '--environment', input.environment]);
-  }
-
-  if (!input.snapshot) throw new BoatError('command-failed', 'Pick a saved snapshot.');
-  return spawnBoat('new', [...args, '--from', input.snapshot]);
+/** `boat rename <id> <name>`; a fork has no `--name` flag. */
+export const renameSandbox = async (sandboxId: string, name: string): Promise<void> => {
+  await runBoat('rename', [sandboxId, name], { timeoutMs: 20_000 });
 };
 

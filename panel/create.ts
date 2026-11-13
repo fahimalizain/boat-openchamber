@@ -1,15 +1,29 @@
 /** Opening, loading and submitting the create form, and the progress it reports. */
 import { isRecord } from '../shared/json.ts';
-import type { CreateSandboxRequest, CreateSource } from '../shared/routes.ts';
+import type { CreateSandboxRequest, CreateStartKind } from '../shared/routes.ts';
+import { isSandboxSize, type SandboxSummary } from '../shared/types.ts';
 import type { ServiceClient } from './api.ts';
-import { blockedReason, createRequest, defaultForm, type CreateState } from './create-state.ts';
+import {
+  blockedReason,
+  copyName,
+  createRequest,
+  defaultEnvironment,
+  defaultForm,
+  defaultName,
+  type CreateState,
+} from './create-state.ts';
 import type { Cell, Reporter } from './state.ts';
 
 export type CreateActions = {
-  openCreate: (source?: CreateSource, forkId?: string | null) => void;
+  openCreate: (start?: CreateStartKind, copyFrom?: string | null) => void;
   closeCreate: () => void;
-  setCreate: (patch: Partial<CreateState>) => void;
-  setCreateSource: (source: CreateSource) => void;
+  setCreateStart: (start: CreateStartKind) => void;
+  setCreateSnapshot: (name: string) => void;
+  setCreateCopy: (sandboxId: string) => void;
+  setCreateEnvironment: (environment: string) => void;
+  setCreateSize: (value: string) => void;
+  setCreateName: (name: string) => void;
+  setCreateHours: (hours: number) => void;
   submitCreate: () => Promise<void>;
   handleCreateProgress: (data: unknown) => void;
 };
@@ -27,16 +41,31 @@ export const createCreateActions = (deps: {
     deps.cell.patch({ create: { ...current, ...patch } });
   };
 
-  const loadOptions = async (source: CreateSource, forkId: string | null): Promise<void> => {
+  const sourceOf = (sandboxId: string | null): SandboxSummary | null => (
+    sandboxId ? deps.cell.get().sandboxes.find((sandbox) => sandbox.id === sandboxId) ?? null : null
+  );
+
+  const loadOptions = async (start: CreateStartKind, copyFrom: string | null): Promise<void> => {
     const directory = deps.cell.get().directory;
-    set({ open: true, loading: true, source, fork: forkId });
+    set({ open: true, loading: true, start, copyFrom });
     try {
       const options = await deps.client.createOptions(directory);
       const form = defaultForm(options, directory);
+      const state = deps.cell.get();
+      const copyId = copyFrom ?? state.sandboxId ?? state.sandboxes[0]?.id ?? null;
+      const copySource = start === 'copy' ? sourceOf(copyId) : null;
+
       set({
         ...form,
-        source,
-        fork: forkId ?? form.fork,
+        start,
+        copyFrom: start === 'copy' ? copySource?.id ?? null : null,
+        environment: start === 'copy' ? null : form.environment,
+        size: start === 'copy' ? null : form.size,
+        name: start === 'copy'
+          ? copyName(copySource)
+          : start === 'snapshot'
+            ? (form.snapshot ?? '')
+            : form.name,
         options,
         loading: false,
         busy: false,
@@ -47,32 +76,41 @@ export const createCreateActions = (deps: {
     }
   };
 
-  const openCreate = (source: CreateSource = 'environment', forkId: string | null = null): void => {
-    void loadOptions(source, forkId);
+  const openCreate = (start: CreateStartKind = 'clean', copyFrom: string | null = null): void => {
+    void loadOptions(start, copyFrom);
   };
 
-  const setCreateSource = (source: CreateSource): void => {
+  const setCreateStart = (start: CreateStartKind): void => {
     const state = deps.cell.get();
     const create = state.create;
-    const patch: Partial<CreateState> = { source };
+    const options = create.options;
 
-    if (source === 'environment' && !create.environment) {
-      patch.environment = create.options?.suggestedEnvironment ?? create.options?.environments[0]?.name ?? null;
+    if (start === 'copy') {
+      const copyFrom = create.copyFrom
+        ?? (state.sandboxes.some((sandbox) => sandbox.id === state.sandboxId) ? state.sandboxId : null)
+        ?? state.sandboxes[0]?.id
+        ?? null;
+      set({ start, copyFrom, environment: null, size: null, name: copyName(sourceOf(copyFrom)) });
+      return;
     }
-    if (source === 'snapshot' && !create.snapshot) {
-      patch.snapshot = create.options?.snapshots[0]?.name ?? null;
+
+    const environment = create.environment ?? defaultEnvironment(options);
+    const size = create.size ?? 'default';
+
+    if (start === 'snapshot') {
+      const snapshot = create.snapshot ?? options?.snapshots[0]?.name ?? null;
+      set({ start, environment, size, snapshot, name: snapshot ?? '' });
+      return;
     }
-    if (source === 'fork' && !create.fork) {
-      patch.fork = state.sandboxId ?? state.sandboxes[0]?.id ?? null;
-    }
-    set(patch);
+
+    set({ start, environment, size, name: defaultName(state.directory) });
   };
 
   const submitCreate = async (): Promise<void> => {
-    const { create } = deps.cell.get();
+    const { create, sandboxes } = deps.cell.get();
     if (create.busy || create.loading) return;
 
-    const blocked = blockedReason(create, create.options);
+    const blocked = blockedReason(create, create.options, sandboxes);
     if (blocked) {
       deps.toast('info', blocked);
       return;
@@ -108,6 +146,13 @@ export const createCreateActions = (deps: {
     if (phase !== 'ready') return;
 
     set({ busy: false, open: false });
+    if (message) {
+      deps.reporter.setBanner({
+        tone: 'warning',
+        title: 'The sandbox is ready, but was not renamed',
+        body: message,
+      });
+    }
     deps.toast('success', 'Sandbox is ready.');
     void (async () => {
       try {
@@ -122,8 +167,13 @@ export const createCreateActions = (deps: {
   return {
     openCreate,
     closeCreate: () => set({ open: false }),
-    setCreate: set,
-    setCreateSource,
+    setCreateStart,
+    setCreateSnapshot: (name) => set({ snapshot: name, name }),
+    setCreateCopy: (sandboxId) => set({ copyFrom: sandboxId, name: copyName(sourceOf(sandboxId)) }),
+    setCreateEnvironment: (environment) => set({ environment: environment === 'inherit' ? null : environment }),
+    setCreateSize: (value) => set({ size: value === 'source' ? null : isSandboxSize(value) ? value : null }),
+    setCreateName: (name) => set({ name }),
+    setCreateHours: (hours) => set({ autoStopHours: Number.isFinite(hours) ? hours : 0 }),
     submitCreate,
     handleCreateProgress,
   };

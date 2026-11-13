@@ -1,6 +1,6 @@
 {
   "name": "boat-openchamber",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "boat.dev sandboxes in OpenChamber: Work Status rows, a rail panel for live agent conversations, and @ mentions.",
   "license": "MIT",
   "author": "Fahim Ali Zain",
@@ -25,7 +25,7 @@
     "build": "sh scripts/bun.sh x openchamber-guest-bundle --node service/main.ts service/main.js && sh scripts/bun.sh x openchamber-guest-bundle panel/main.ts panel/main.js",
     "check": "sh scripts/bun.sh x openchamber-guest-check",
     "typecheck": "tsc --noEmit",
-    "test": "node --test service/project/matcher.test.ts service/mentions/rows.test.ts shared/transcript.test.ts service/create/progress.test.ts service/create/request.test.ts panel/create-state.test.ts service/marks/mark.test.ts panel/device.test.ts panel/preferences.test.ts"
+    "test": "node --test service/project/matcher.test.ts service/mentions/rows.test.ts shared/transcript.test.ts service/create/progress.test.ts service/create/request.test.ts service/create/argv.test.ts panel/create-state.test.ts service/marks/mark.test.ts panel/device.test.ts panel/preferences.test.ts"
   },
   "openchamber": {
     "apiVersion": 1,

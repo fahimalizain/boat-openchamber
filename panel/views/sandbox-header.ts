@@ -17,7 +17,7 @@ export type SandboxHeaderHandlers = {
   onSelect: (sandboxId: string) => void;
   onAction: (action: SandboxAction) => void;
   onNew: () => void;
-  onFork: () => void;
+  onCopy: () => void;
 };
 
 const hintOf = (sandbox: PanelState['sandboxes'][number]): string => {
@@ -65,11 +65,11 @@ export const createSandboxHeader = (
     size: 'sm',
     onClick: handlers.onNew,
   });
-  const forkSandbox = buttonSlot(roots.actions, {
-    label: 'Fork',
+  const copySandbox = buttonSlot(roots.actions, {
+    label: 'Copy',
     size: 'sm',
     variant: 'outline',
-    onClick: handlers.onFork,
+    onClick: handlers.onCopy,
   });
   const stop = buttonSlot(roots.actions, {
     label: 'Stop',
@@ -94,7 +94,7 @@ export const createSandboxHeader = (
     size: 'sm',
     onClick: () => handlers.onAction('resume'),
   });
-  const buttons = [newSandbox, forkSandbox, stop, extend, desktop, resume];
+  const buttons = [newSandbox, copySandbox, stop, extend, desktop, resume];
 
   function render(state: PanelState): void {
     lastState = state;
@@ -144,7 +144,7 @@ export const createSandboxHeader = (
 
     const up = sandbox ? isUpState(sandbox.state) : false;
     const stopped = sandbox ? isStoppedState(sandbox.state) : false;
-    forkSandbox.slot.hidden = !sandbox;
+    copySandbox.slot.hidden = !sandbox;
     stop.slot.hidden = !up;
     extend.slot.hidden = !up;
     desktop.slot.hidden = !up || sandbox?.desktopAvailable !== true;

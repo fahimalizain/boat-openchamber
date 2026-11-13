@@ -39,7 +39,12 @@ export type HistoryResponse = {
   now: number;
 };
 
-export type CreateSource = 'environment' | 'snapshot' | 'fork';
+export type CreateStartKind = 'clean' | 'snapshot' | 'copy';
+
+export type CreateStart =
+  | { kind: 'clean' }
+  | { kind: 'snapshot'; name: string }
+  | { kind: 'copy'; sandboxId: string };
 
 export type CreateEnvironment = { name: string; isDefault: boolean };
 
@@ -47,6 +52,7 @@ export type CreateSnapshot = {
   name: string;
   type: string | null;
   createdAt: string | null;
+  sizeBytes: number | null;
 };
 
 export type CreateSize = {
@@ -73,11 +79,11 @@ export type CreateOptionsResponse = {
 };
 
 export type CreateSandboxRequest = {
-  source: CreateSource;
+  start: CreateStart;
+  /** Undefined: the account default, or the source's environment for a copy. */
   environment?: string;
-  snapshot?: string;
-  fork?: string;
-  type?: SandboxSize;
+  /** Undefined: the default size, or the source's size for a copy. */
+  size?: SandboxSize;
   name?: string;
   autoStopHours?: number;
 };

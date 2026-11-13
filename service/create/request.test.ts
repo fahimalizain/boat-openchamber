@@ -14,60 +14,72 @@ const limits = (overrides: Partial<PlanLimits> = {}): PlanLimits => ({
   ...overrides,
 });
 
-test('an environment create carries its source, size, name and TTL', () => {
+test('a clean machine keeps its environment, size, name and TTL', () => {
   const result = readCreateRequest({
-    source: 'environment',
+    start: { kind: 'clean' },
     environment: 'web',
-    type: 'large',
+    size: 'large',
     name: 'web 2026-11-13',
     autoStopHours: 2,
   }, 2);
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.ok && result.input, {
-    source: 'environment',
+    start: { kind: 'clean' },
     environment: 'web',
-    snapshot: undefined,
-    fork: undefined,
-    type: 'large',
+    size: 'large',
     name: 'web 2026-11-13',
     autoStopSeconds: 7_200,
   });
 });
 
-test('each source needs its target', () => {
-  assert.equal(readCreateRequest({ source: 'environment' }, 2).ok, false);
-  assert.equal(readCreateRequest({ source: 'snapshot' }, 2).ok, false);
-  assert.equal(readCreateRequest({ source: 'fork' }, 2).ok, false);
-  assert.equal(readCreateRequest({ source: 'fork', fork: '../../etc' }, 2).ok, false);
-  assert.equal(readCreateRequest({ source: 'fork', fork: 'bx_7ppmwt9v' }, 2).ok, true);
-});
-
-test('a fork drops the name it cannot set', () => {
+test('a snapshot start keeps its name and may carry an environment', () => {
   const result = readCreateRequest({
-    source: 'fork',
-    fork: 'bx_7ppmwt9v',
-    name: 'ignored',
+    start: { kind: 'snapshot', name: 'worker-base' },
+    environment: 'web',
     autoStopHours: 1,
   }, 2);
+
   assert.equal(result.ok, true);
-  assert.equal(result.ok && result.input.name, undefined);
-  assert.equal(result.ok && result.input.autoStopSeconds, 3_600);
+  assert.deepEqual(result.ok && result.input.start, { kind: 'snapshot', name: 'worker-base' });
+  assert.equal(result.ok && result.input.environment, 'web');
+});
+
+test('a copy start carries the sandbox and its name for the rename', () => {
+  const result = readCreateRequest({
+    start: { kind: 'copy', sandboxId: 'bx_7ppmwt9v' },
+    name: 'Box copy',
+    autoStopHours: 1,
+  }, 2);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.ok && result.input.start, { kind: 'copy', sandboxId: 'bx_7ppmwt9v' });
+  assert.equal(result.ok && result.input.environment, undefined);
+  assert.equal(result.ok && result.input.size, undefined);
+  assert.equal(result.ok && result.input.name, 'Box copy');
+});
+
+test('the start is required and each kind validates its target', () => {
+  assert.equal(readCreateRequest(null, 2).ok, false);
+  assert.equal(readCreateRequest({ start: { kind: 'nope' as never } }, 2).ok, false);
+  assert.equal(readCreateRequest({ start: { kind: 'snapshot', name: '' } }, 2).ok, false);
+  assert.equal(readCreateRequest({ start: { kind: 'copy', sandboxId: '../../etc' } }, 2).ok, false);
+  assert.equal(readCreateRequest({ start: { kind: 'copy', sandboxId: 'bx_7ppmwt9v' } }, 2).ok, true);
 });
 
 test('sizes, names and hours are validated', () => {
   assert.equal(
-    readCreateRequest({ source: 'environment', environment: 'web', type: 'huge' as never }, 2).ok,
+    readCreateRequest({ start: { kind: 'clean' }, size: 'huge' as never }, 2).ok,
     false,
   );
   assert.equal(
-    readCreateRequest({ source: 'environment', environment: 'web', name: 'x'.repeat(121) }, 2).ok,
+    readCreateRequest({ start: { kind: 'clean' }, name: 'x'.repeat(121) }, 2).ok,
     false,
   );
-  assert.equal(readCreateRequest({ source: 'environment', environment: 'web', autoStopHours: 0 }, 2).ok, false);
-  assert.equal(readCreateRequest({ source: 'environment', environment: 'web', autoStopHours: 3 }, 2).ok, false);
-  assert.equal(readCreateRequest({ source: 'environment', environment: 'web', autoStopHours: 1.5 }, 2).ok, false);
-  assert.equal(readCreateRequest({ source: 'environment', environment: 'web', autoStopHours: 2 }, 2).ok, true);
+  assert.equal(readCreateRequest({ start: { kind: 'clean' }, autoStopHours: 0 }, 2).ok, false);
+  assert.equal(readCreateRequest({ start: { kind: 'clean' }, autoStopHours: 3 }, 2).ok, false);
+  assert.equal(readCreateRequest({ start: { kind: 'clean' }, autoStopHours: 1.5 }, 2).ok, false);
+  assert.equal(readCreateRequest({ start: { kind: 'clean' }, autoStopHours: 2 }, 2).ok, true);
 });
 
 test('the plan blocks creating when it says so or the slots are full', () => {

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1 — 2026-11-13
+
+- Reworked the New sandbox form: **Start from** (clean machine / saved snapshot /
+  copy of a sandbox) is now separate from **Environment**, which applies to every
+  start. The environment defaults to the project's, a copy inherits the source's
+  unless changed, sizes carry their specs, snapshot and copy pickers show size,
+  date or state, every field is labelled, and the billing hint is one short line.
+- A copy is renamed with `boat rename <id> <name>` after it starts; a failed
+  rename still selects the sandbox and explains itself in a banner.
+- The create request is now `{ start, environment?, size?, name?, autoStopHours }`,
+  mapped to `boat new` / `boat fork` argv by one tested function.
+- Removed the old three-tab source model with no leftovers.
+
 ## 0.3.0 — 2026-11-13
 
 - Sidebar marks: a small anchor on each registered project's rows, with the
