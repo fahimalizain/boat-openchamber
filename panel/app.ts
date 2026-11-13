@@ -142,6 +142,9 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
   const composer = createComposer(
     {
       root: byId('composer'),
+      inbox: byId('composer-inbox'),
+      attachments: byId('composer-attachments'),
+      attach: byId('composer-attach'),
       agent: byId('agent-select'),
       model: byId('model-select'),
       variant: byId('variant-select'),
@@ -153,8 +156,18 @@ export const startApp = (host: Host, context: HostReadyContext): App => {
       onAgent: (agent) => store.setAgent(agent),
       onModel: (model) => store.setModel(model),
       onVariant: (variant) => store.setVariant(variant),
-      onSubmit: () => {
-        void store.submit();
+      onSubmit: (delivery) => {
+        void store.submit(delivery);
+      },
+      onAttach: (files) => {
+        void store.attach(files);
+      },
+      onRemoveAttachment: store.removeAttachment,
+      onInboxCancel: (id) => {
+        void store.cancelInbox(id);
+      },
+      onInboxToggle: (id) => {
+        void store.toggleInbox(id);
       },
       onStop: () => {
         void store.stop();

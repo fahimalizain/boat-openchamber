@@ -10,13 +10,16 @@ import type {
   OpencodeAbortResponse,
   OpencodeCatalogResponse,
   OpencodeCreateSessionRequest,
+  OpencodeInboxCancelRequest,
+  OpencodeInboxResponse,
+  OpencodeInboxUpdateRequest,
   OpencodeMessagesResponse,
   OpencodePermissionReplyRequest,
+  OpencodeSessionResponse,
+  OpencodeSessionsResponse,
   OpencodePromptRequest,
   OpencodePromptResponse,
   OpencodeQuestionReplyRequest,
-  OpencodeSessionResponse,
-  OpencodeSessionsResponse,
   ProjectsRequest,
   SandboxesResponse,
 } from '../shared/routes.ts';
@@ -40,6 +43,9 @@ export type ServiceClient = {
   catalog: (sandboxId: string) => Promise<OpencodeCatalogResponse>;
   createSession: (request: OpencodeCreateSessionRequest) => Promise<OpencodeSessionResponse>;
   prompt: (request: OpencodePromptRequest) => Promise<OpencodePromptResponse>;
+  inbox: (sandboxId: string, sessionId: string) => Promise<OpencodeInboxResponse>;
+  cancelInbox: (request: OpencodeInboxCancelRequest) => Promise<OkBody>;
+  updateInbox: (request: OpencodeInboxUpdateRequest) => Promise<OkBody>;
   abort: (request: OpencodeAbortRequest) => Promise<OpencodeAbortResponse>;
   permission: (request: OpencodePermissionReplyRequest) => Promise<OkBody>;
   question: (request: OpencodeQuestionReplyRequest) => Promise<OkBody>;
@@ -97,6 +103,12 @@ export const createServiceClient = (host: HostRequester): ServiceClient => {
     catalog: (sandboxId) => call('GET', `/opencode/catalog${query({ sandbox: sandboxId })}`),
     createSession: (request) => call('POST', '/opencode/session', request),
     prompt: (request) => call('POST', '/opencode/prompt', request),
+    inbox: (sandboxId, sessionId) => call(
+      'GET',
+      `/opencode/inbox${query({ sandbox: sandboxId, session: sessionId })}`,
+    ),
+    cancelInbox: (request) => call('POST', '/opencode/inbox/cancel', request),
+    updateInbox: (request) => call('POST', '/opencode/inbox/update', request),
     abort: (request) => call('POST', '/opencode/abort', request),
     permission: (request) => call('POST', '/opencode/permission', request),
     question: (request) => call('POST', '/opencode/question', request),

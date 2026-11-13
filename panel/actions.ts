@@ -1,5 +1,6 @@
-/** What the panel asks for: sessions, prompts, stops, answers and sandbox commands. */
+/** What the panel asks for: sessions, prompts, inbox edits, stops, answers and sandbox commands. */
 import type {
+  OpencodeInboxDelivery,
   OpencodeModelRef,
   OpencodePermissionDecision,
   OpencodeQuestionAnswer,
@@ -10,6 +11,16 @@ import type {
 import { isUpState, type SandboxAction } from '../shared/types.ts';
 import type { ServiceClient } from './api.ts';
 import {
+  attachmentName,
+  fitsBody,
+  imageBudget,
+  isImageFile,
+  MAX_ATTACHMENTS,
+  prepareImage,
+  releaseImages,
+} from './attachments.ts';
+import {
+  findModel,
   modelRefFromKey,
   modelRefWithVariant,
   settleSelection,
@@ -23,8 +34,9 @@ import {
   withoutQuestion,
 } from './chat-model.ts';
 import type { Loaders } from './data.ts';
+import { deliveryFor, toggledDelivery, withInboxDelivery, withoutInbox } from './inbox.ts';
 import type { ModelChoice, Preferences, PreferenceStore } from './preferences.ts';
-import type { Cell, PanelState, Reporter } from './state.ts';
+import { messageOf, type Cell, type PanelState, type Reporter } from './state.ts';
 import { defaultTab, type PanelTab } from './tab.ts';
 
 export type Actions = {
@@ -40,7 +52,11 @@ export type Actions = {
   setAgent: (agent: string) => void;
   setModel: (key: string) => void;
   setVariant: (variant: string) => void;
-  submit: () => Promise<void>;
+  attach: (files: File[]) => Promise<void>;
+  removeAttachment: (id: string) => void;
+  submit: (delivery?: OpencodeInboxDelivery | null) => Promise<void>;
+  cancelInbox: (id: string) => Promise<void>;
+  toggleInbox: (id: string) => Promise<void>;
   stop: () => Promise<void>;
   respondPermission: (requestId: string, decision: OpencodePermissionDecision) => Promise<void>;
   respondQuestion: (questionId: string, answer: Record<string, OpencodeQuestionAnswer>) => Promise<void>;
@@ -214,6 +230,7 @@ export const createActions = (deps: {
     current.sessions = [answer.session, ...current.sessions.filter((entry) => entry.id !== answer.session.id)];
     current.sessionId = answer.session.id;
     current.chat = createChatModel({ session: answer.session, messages: [] });
+    current.inbox = [];
     cell.notify();
     return answer.session;
   };
@@ -263,12 +280,13 @@ export const createActions = (deps: {
     }
   };
 
-  const submit = async (): Promise<void> => {
+  const submit = async (requested: OpencodeInboxDelivery | null = null): Promise<void> => {
     const state = cell.get();
     const sandboxId = state.sandboxId;
     const text = state.draft.trim();
+    const images = state.attachments;
     if (!sandboxId || state.busy) return;
-    if (!text) {
+    if (!text && images.length === 0) {
       toast('info', 'Write a message first.');
       return;
     }
@@ -276,7 +294,13 @@ export const createActions = (deps: {
       toast('info', 'Resume the sandbox first.');
       return;
     }
+    if (!fitsBody(text, images)) {
+      toast('error', 'That message and its images are too large to send together.');
+      return;
+    }
 
+    const turning = state.chat?.session.status === 'busy';
+    const delivery = deliveryFor(turning, requested);
     cell.patch({ busy: true });
     try {
       const sessionId = state.sessionId ?? (await createSession())?.id ?? null;
@@ -288,13 +312,24 @@ export const createActions = (deps: {
         sandbox: sandboxId,
         session: sessionId,
         text,
+        ...(images.length > 0
+          ? { files: images.map((image) => ({ name: image.name, mime: image.mime, data: image.data })) }
+          : {}),
+        ...(delivery ? { delivery } : {}),
         ...(current.agent ? { agent: current.agent } : {}),
         ...(model ? { model } : {}),
       });
 
+      releaseImages(images);
       current.draft = '';
-      forceStatus(sessionId, 'busy');
-      toast('success', 'Prompt sent.');
+      current.attachments = [];
+      // A steer or a queue leaves the turn running; an idle send starts it.
+      if (delivery === null) forceStatus(sessionId, 'busy');
+      cell.notify();
+      toast(
+        'success',
+        delivery === 'steer' ? 'Steering the running turn.' : delivery === 'queue' ? 'Queued for after the turn.' : 'Prompt sent.',
+      );
       reporter.setBanner(null);
       await loaders.messages(sessionId).catch(() => {
         // The stream fills the turn in; the next open reads it again.
@@ -303,6 +338,108 @@ export const createActions = (deps: {
       reporter.fail('The prompt did not go through', failure);
     } finally {
       cell.patch({ busy: false });
+    }
+  };
+
+  let attaching = false;
+
+  /** Shrinks and stores the images a paste, a drop or the file input offered. */
+  const attach = async (files: File[]): Promise<void> => {
+    const state = cell.get();
+    if (!state.sandboxId || state.busy) return;
+    if (attaching) {
+      toast('info', 'Still preparing the last image.');
+      return;
+    }
+
+    const images = files.filter((file) => isImageFile(file));
+    if (images.length === 0) {
+      toast('info', 'Only images can be attached.');
+      return;
+    }
+
+    const room = MAX_ATTACHMENTS - state.attachments.length;
+    if (room <= 0) {
+      toast('info', `At most ${MAX_ATTACHMENTS} images per message.`);
+      return;
+    }
+    if (images.length > room) {
+      toast('info', `Only ${room} more image${room === 1 ? '' : 's'} fit in this message.`);
+    }
+
+    const model = findModel(state.catalog?.models ?? [], state.model);
+    if (model?.imageInput === false) {
+      toast('info', `${model.name} reads text only; it may ignore the image.`);
+    }
+
+    attaching = true;
+    try {
+      const picked = images.slice(0, room);
+      for (let index = 0; index < picked.length; index += 1) {
+        const file = picked[index];
+        if (!file) continue;
+        const current = cell.get();
+        if (!current.sandboxId || current.busy) break;
+        const used = current.attachments.reduce((total, image) => total + image.data.length, 0);
+        const budget = imageBudget(used, current.draft.length);
+        if (budget < 1_500) {
+          toast('info', 'The composer is full; send or remove an image first.');
+          break;
+        }
+        try {
+          const image = await prepareImage(file, budget, attachmentName(file, index));
+          const latest = cell.get();
+          if (latest.sandboxId !== state.sandboxId) {
+            releaseImages([image]);
+            break;
+          }
+          latest.attachments = [...latest.attachments, image];
+          cell.notify();
+        } catch (failure) {
+          toast('error', messageOf(failure));
+        }
+      }
+    } finally {
+      attaching = false;
+    }
+  };
+
+  const removeAttachment = (id: string): void => {
+    const state = cell.get();
+    const image = state.attachments.find((entry) => entry.id === id);
+    if (!image) return;
+    releaseImages([image]);
+    state.attachments = state.attachments.filter((entry) => entry.id !== id);
+    cell.notify();
+  };
+
+  const cancelInbox = async (id: string): Promise<void> => {
+    const state = cell.get();
+    if (!state.sandboxId || !state.sessionId || state.busy) return;
+    const { sandboxId, sessionId } = state;
+    cell.patch({ inbox: withoutInbox(state.inbox, id) });
+    try {
+      await client.cancelInbox({ sandbox: sandboxId, session: sessionId, inbox: id });
+      toast('success', 'Dropped that message.');
+    } catch (failure) {
+      reporter.fail('That message was not dropped', failure);
+      void loaders.inbox(sessionId).catch(() => {});
+    }
+  };
+
+  const toggleInbox = async (id: string): Promise<void> => {
+    const state = cell.get();
+    const entry = state.inbox.find((row) => row.id === id);
+    if (!entry || !state.sandboxId || !state.sessionId || state.busy) return;
+    const { sandboxId, sessionId } = state;
+    const delivery = toggledDelivery(entry.delivery);
+    cell.patch({ inbox: withInboxDelivery(state.inbox, id, delivery) });
+    try {
+      await client.updateInbox({ sandbox: sandboxId, session: sessionId, inbox: id, delivery });
+      toast('success', delivery === 'steer' ? 'Will steer the running turn.' : 'Queued for after the turn.');
+    } catch (failure) {
+      reporter.fail('Could not change that message', failure);
+      void loaders.inbox(sessionId).catch(() => {});
     }
   };
 
@@ -468,7 +605,11 @@ export const createActions = (deps: {
       cell.notify();
       savePreferences();
     },
+    attach,
+    removeAttachment,
     submit,
+    cancelInbox,
+    toggleInbox,
     stop,
     respondPermission,
     respondQuestion,

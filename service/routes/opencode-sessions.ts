@@ -11,6 +11,7 @@ import type { ServiceContext } from '../context.ts';
 import { describeFailure } from '../failures.ts';
 import { normalizeSession, toModelRefInput } from '../opencode/normalize.ts';
 import {
+  readInbox,
   readPermissions,
   readQuestions,
   readSession,
@@ -62,12 +63,13 @@ export const opencodeSessionRoutes = (deps: Deps): Route[] => [
       const result = await deps.opencode.run(sandboxId, async (connection) => {
         const session = await readSession(connection, sessionId);
         if (!session) throw new Error('That OpenCode session no longer exists.');
-        const [history, permissions, questions] = await Promise.all([
+        const [history, permissions, questions, inbox] = await Promise.all([
           readSessionMessages(connection, sessionId),
           readPermissions(connection, sessionId),
           readQuestions(connection, sessionId),
+          readInbox(connection, sessionId),
         ]);
-        return { session, ...history, permissions, questions };
+        return { session, ...history, permissions, questions, inbox };
       });
       const body: OpencodeMessagesResponse = { ...result, now: Date.now() };
       return context.reply(200, body);

@@ -252,9 +252,31 @@ export type OpencodeModel = {
   /** True when the model exposes at least one reasoning variant. */
   reasoning: boolean;
   tools: boolean;
+  /** False when the catalogue says the model takes text only; null when unknown. */
+  imageInput: boolean | null;
   contextLimit: number | null;
   outputLimit: number | null;
   enabled: boolean;
+};
+
+/** How a prompt reaches a running turn: into it now, or after it finishes. */
+export type OpencodeInboxDelivery = 'steer' | 'queue';
+
+/**
+ * One prompt OpenCode is holding: a steer that has not reached the running turn
+ * yet, or a queue waiting for the turn to end.
+ */
+export type OpencodeInboxEntry = {
+  id: string;
+  sessionID: string;
+  /** The prompt's text, clipped for the one-line row the panel draws. */
+  text: string;
+  delivery: OpencodeInboxDelivery;
+  /** Epoch milliseconds. */
+  createdAt: number;
+  /** Attachments, without their bytes. */
+  files: OpencodeFilePart[];
+  type: 'user' | 'synthetic' | 'compaction' | 'move';
 };
 
 export type OpencodeCatalog = {
@@ -287,6 +309,11 @@ export type OpencodeStreamEvent =
   }
   | {
     type: 'session-deleted';
+    sessionID: string;
+  }
+  | {
+    /** The session's pending inbox gained, lost or re-flagged an entry. */
+    type: 'inbox-changed';
     sessionID: string;
   }
   | {

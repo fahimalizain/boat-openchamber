@@ -11,6 +11,7 @@ import { mentionRoutes } from './routes/mentions.ts';
 import { opencodeCatalogRoutes } from './routes/opencode-catalog.ts';
 import { opencodeChatRoutes } from './routes/opencode-chat.ts';
 import { opencodeEventRoutes } from './routes/opencode-events.ts';
+import { opencodeInboxRoutes } from './routes/opencode-inbox.ts';
 import { opencodeSessionRoutes } from './routes/opencode-sessions.ts';
 import { projectRoutes } from './routes/projects.ts';
 import { sandboxRoutes } from './routes/sandboxes.ts';
@@ -43,6 +44,7 @@ const route = createRouter([
   ...createRoutes(context),
   ...opencodeSessionRoutes(context),
   ...opencodeChatRoutes(context),
+  ...opencodeInboxRoutes(context),
   ...opencodeCatalogRoutes(context),
   ...opencodeEventRoutes(context),
   ...mentionRoutes(context),

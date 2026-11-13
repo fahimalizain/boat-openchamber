@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- The composer no longer locks while a turn runs. Enter **steers** the running
+  turn, **Queue** holds the message for after it, Stop stays on the same row, and
+  a running turn keeps its agent/model picks editable. Pending steers and queues
+  show as one-line rows above the composer with a cancel (×) and a steer⇄queue
+  switch; they stay in sync through the new `session.inbox.*` events, the
+  `GET /opencode/inbox` routes and the inbox that comes with a session read.
+- Prompts can carry images: paste from the clipboard, drop them on the composer,
+  or use **Attach**. The panel downscales each one (max 1600 px long edge) and
+  re-encodes it as WebP/JPEG until the base64 fits the 64 000-character
+  panel→service body cap, shows a thumbnail (with ×) before sending, sends it as
+  an inline OpenCode file, and warns when the selected model is text-only. Sent
+  attachments show as a name chip in the transcript.
 - The panel now drives each sandbox's **OpenCode server** instead of the boat
   CLI: the Conversations tab became **Sessions**, with a dense session list and
   directory filter, a live transcript (collapsed reasoning, tool rows that expand

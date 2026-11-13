@@ -50,6 +50,18 @@ export const createLive = (deps: {
     }, 400);
   };
 
+  let inboxTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const scheduleInbox = (): void => {
+    if (inboxTimer) clearTimeout(inboxTimer);
+    inboxTimer = setTimeout(() => {
+      inboxTimer = null;
+      void loaders.inbox().catch(() => {
+        // The next prompt or open reads the inbox again.
+      });
+    }, 250);
+  };
+
   const handleEvents = (events: unknown[]): void => {
     const state = cell.get();
     let sessions = state.sessions;
@@ -57,6 +69,7 @@ export const createLive = (deps: {
     let sessionId = state.sessionId;
     let changed = false;
     let refetch = false;
+    let refetchInbox = false;
 
     for (const raw of events) {
       const event = eventOf(raw);
@@ -78,6 +91,7 @@ export const createLive = (deps: {
 
       const target = sessionOf(event);
       if (event.type === 'message-changed' && target === sessionId) refetch = true;
+      if (event.type === 'inbox-changed' && target === sessionId) refetchInbox = true;
       if (event.type === 'session-deleted' && target === sessionId) {
         sessionId = null;
         chat = null;
@@ -87,6 +101,7 @@ export const createLive = (deps: {
 
     if (changed) cell.patch({ sessions, chat, sessionId });
     if (refetch) scheduleMessages();
+    if (refetchInbox) scheduleInbox();
   };
 
   const handleServiceEvent = (topic: string, data: unknown): void => {
@@ -138,6 +153,10 @@ export const createLive = (deps: {
     if (refreshTimer) {
       clearTimeout(refreshTimer);
       refreshTimer = null;
+    }
+    if (inboxTimer) {
+      clearTimeout(inboxTimer);
+      inboxTimer = null;
     }
     const sandboxId = cell.get().sandboxId;
     if (!sandboxId) return;

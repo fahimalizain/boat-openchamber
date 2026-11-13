@@ -24,6 +24,7 @@ const model = (overrides: Partial<OpencodeModel> = {}): OpencodeModel => ({
   variants: [],
   reasoning: false,
   tools: true,
+  imageInput: null,
   contextLimit: null,
   outputLimit: null,
   enabled: true,

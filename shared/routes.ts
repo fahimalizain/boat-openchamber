@@ -1,6 +1,8 @@
 /** What the panel and the service say to each other, plus the row action ids. */
 import type {
   OpencodeCatalog,
+  OpencodeInboxDelivery,
+  OpencodeInboxEntry,
   OpencodeMessage,
   OpencodeModelRef,
   OpencodePermissionDecision,
@@ -111,6 +113,8 @@ export type OpencodeMessagesResponse = {
   messages: OpencodeMessage[];
   permissions: OpencodePermissionRequest[];
   questions: OpencodeQuestionRequest[];
+  /** Prompts OpenCode is still holding for this session. */
+  inbox: OpencodeInboxEntry[];
   /** True when the history ran past the service's page cap. */
   truncated: boolean;
   now: number;
@@ -127,6 +131,13 @@ export type OpencodeCreateSessionRequest = {
 
 export type OpencodeSessionResponse = { session: OpencodeSession };
 
+/** An image the panel already downscaled; base64 without the data: prefix. */
+export type OpencodePromptFile = {
+  name: string;
+  mime: string;
+  data: string;
+};
+
 export type OpencodePromptRequest = {
   sandbox: string;
   session: string;
@@ -134,11 +145,15 @@ export type OpencodePromptRequest = {
   /** Switch the session's agent and model before the prompt, when given. */
   agent?: string;
   model?: OpencodeModelRef;
+  /** Steer the running turn, or queue the prompt for after it; idle sends all. */
+  delivery?: OpencodeInboxDelivery;
+  /** Inline attachments, sent as data URIs. */
+  files?: OpencodePromptFile[];
 };
 
 export type OpencodePromptResponse = OkBody & {
   sessionID: string;
-  /** The admitted user message, when the server returns it. */
+  /** The inbox entry the server admitted, when it returns one. */
   messageID: string | null;
 };
 
@@ -161,6 +176,22 @@ export type OpencodeQuestionReplyRequest = {
 };
 
 export type OpencodeCatalogResponse = OpencodeCatalog & { now: number };
+
+/** The prompts a session is still holding, oldest first. */
+export type OpencodeInboxResponse = {
+  entries: OpencodeInboxEntry[];
+  now: number;
+};
+
+export type OpencodeInboxCancelRequest = {
+  sandbox: string;
+  session: string;
+  inbox: string;
+};
+
+export type OpencodeInboxUpdateRequest = OpencodeInboxCancelRequest & {
+  delivery: OpencodeInboxDelivery;
+};
 
 /** One OpenCode event stream per sandbox; every watch call is a keep-alive. */
 export type OpencodeWatchRequest = { sandbox: string };

@@ -5,6 +5,7 @@
 import { isRecord, readString } from '../../shared/json.ts';
 import type {
   OpencodeAgent,
+  OpencodeInboxEntry,
   OpencodeMessage,
   OpencodeModel,
   OpencodePermissionRequest,
@@ -16,6 +17,7 @@ import type {
 import type { OpencodeConnection } from './connection.ts';
 import {
   normalizeAgent,
+  normalizeInboxEntry,
   normalizeMessage,
   normalizeModels,
   normalizePermissionRequest,
@@ -152,6 +154,18 @@ export const readQuestions = async (
   return rowsOf(raw).flatMap((entry) => {
     const request = normalizeQuestionRequest(entry);
     return request ? [request] : [];
+  });
+};
+
+/** The prompts the server is holding for a session, in the order it listed them. */
+export const readInbox = async (
+  connection: OpencodeConnection,
+  sessionID: string,
+): Promise<OpencodeInboxEntry[]> => {
+  const raw: unknown = await connection.client.session.inbox.list({ sessionID });
+  return rowsOf(raw).flatMap((entry) => {
+    const item = normalizeInboxEntry(entry);
+    return item ? [item] : [];
   });
 };
 

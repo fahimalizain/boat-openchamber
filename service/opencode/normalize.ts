@@ -7,6 +7,7 @@ import { clip, isRecord, readNumber, readString } from '../../shared/json.ts';
 import type {
   OpencodeAgent,
   OpencodeFilePart,
+  OpencodeInboxEntry,
   OpencodeMessage,
   OpencodeModel,
   OpencodeModelRef,
@@ -26,6 +27,7 @@ import type {
 } from '../../shared/opencode.ts';
 
 const TOOL_OUTPUT_MAX = 20_000;
+const INBOX_TEXT_MAX = 400;
 
 const readTimestamp = (value: unknown): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -363,6 +365,41 @@ export const normalizeMessage = (raw: unknown, sessionID: string): OpencodeMessa
   return { ...base, parts: textPart(text) };
 };
 
+const INBOX_TYPES: readonly OpencodeInboxEntry['type'][] = ['user', 'synthetic', 'compaction', 'move'];
+
+/**
+ * One prompt the server is holding. The payload may carry inline attachment
+ * bytes; only the name and MIME survive, as everywhere else in this module.
+ */
+export const normalizeInboxEntry = (raw: unknown): OpencodeInboxEntry | null => {
+  if (!isRecord(raw)) return null;
+  const id = readString(raw.id);
+  const sessionID = readString(raw.sessionID);
+  if (!id || !sessionID) return null;
+
+  const payload = isRecord(raw.payload) ? raw.payload : {};
+  const type = readString(raw.type);
+  const delivery = raw.delivery === 'steer' ? 'steer' : 'queue';
+  const files = Array.isArray(payload.files)
+    ? payload.files.flatMap((entry) => {
+      const file = readAttachment(entry);
+      return file ? [file] : [];
+    })
+    : [];
+
+  return {
+    id,
+    sessionID,
+    text: clip(readString(payload.text) ?? '', INBOX_TEXT_MAX),
+    delivery,
+    createdAt: readTimestamp(isRecord(raw.time) ? raw.time.created : null),
+    files,
+    type: type !== null && (INBOX_TYPES as readonly string[]).includes(type)
+      ? type as OpencodeInboxEntry['type']
+      : 'user',
+  };
+};
+
 /** `Session.Info`, or the smaller `session.created` event payload. */
 export const normalizeSession = (raw: unknown): OpencodeSession | null => {
   if (!isRecord(raw)) return null;
@@ -515,6 +552,9 @@ export const normalizeModel = (raw: unknown, providerName: string): OpencodeMode
     })
     : [];
   const capabilities = isRecord(raw.capabilities) ? raw.capabilities : null;
+  const inputs = Array.isArray(capabilities?.input)
+    ? capabilities.input.filter((entry): entry is string => typeof entry === 'string')
+    : null;
   const limit = isRecord(raw.limit) ? raw.limit : null;
   return {
     id,
@@ -525,6 +565,7 @@ export const normalizeModel = (raw: unknown, providerName: string): OpencodeMode
     variants,
     reasoning: variants.length > 0,
     tools: capabilities?.tools === true,
+    imageInput: inputs === null ? null : inputs.includes('image'),
     contextLimit: readNumber(limit?.context),
     outputLimit: readNumber(limit?.output),
     enabled: raw.enabled !== false,
@@ -776,8 +817,14 @@ export const normalizeStreamEvent = (raw: unknown): OpencodeStreamEvent | null =
       return { type: 'message-content', sessionID, messageID, parts };
     }
     case 'session.inbox.enqueued':
+    case 'session.inbox.cancelled':
+    case 'session.inbox.delivery.changed': {
+      if (!sessionID) return null;
+      return { type: 'inbox-changed', sessionID };
+    }
     case 'session.inbox.delivered': {
       if (!sessionID) return null;
+      // Delivery moves the entry into the history the panel already refetches.
       return { type: 'message-changed', sessionID, messageID: readString(data.inboxID) };
     }
     case 'session.synthetic':

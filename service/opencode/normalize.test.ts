@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   normalizeAgent,
   normalizeAssistantContent,
+  normalizeInboxEntry,
   normalizeMessage,
   normalizeModel,
   normalizeModels,
@@ -337,6 +338,7 @@ test('agents, providers and models normalise for the pickers', () => {
     variants: ['low', 'high'],
     reasoning: true,
     tools: true,
+    imageInput: false,
     contextLimit: 1_000_000,
     outputLimit: 65_536,
     enabled: true,
@@ -495,4 +497,72 @@ test('stream events normalise the ones the chat renders', () => {
   assert.equal(normalizeStreamEvent({ id: 'evt_9', type: 'session.usage.updated', data: { sessionID: 'ses_1' } }), null);
   assert.equal(normalizeStreamEvent({ id: 'evt_10', type: 'server.connected', data: {} }), null);
   assert.equal(normalizeStreamEvent(null), null);
+});
+
+test('a pending inbox entry keeps its prompt, delivery and attachment names', () => {
+  assert.deepEqual(normalizeInboxEntry({
+    id: 'msg_1',
+    sessionID: 'ses_1',
+    time: { created: 1_700 },
+    type: 'user',
+    delivery: 'steer',
+    payload: {
+      text: 'Look at this',
+      files: [{
+        data: 'AAAA',
+        mime: 'image/png',
+        source: { type: 'inline' },
+        name: 'shot.png',
+      }],
+    },
+  }), {
+    id: 'msg_1',
+    sessionID: 'ses_1',
+    text: 'Look at this',
+    delivery: 'steer',
+    createdAt: 1_700,
+    files: [{ name: 'shot.png', mime: 'image/png', uri: null }],
+    type: 'user',
+  });
+
+  assert.equal(normalizeInboxEntry({ id: 'msg_2', sessionID: 'ses_1', payload: { text: '' } })?.delivery, 'queue');
+  assert.equal(normalizeInboxEntry({ id: 'msg_3', sessionID: 'ses_1', type: 'compaction', payload: {} })?.type, 'compaction');
+  assert.equal(normalizeInboxEntry({ id: 'msg_4', sessionID: 'ses_1', type: 'nonsense', payload: {} })?.type, 'user');
+  assert.equal(normalizeInboxEntry({ sessionID: 'ses_1', payload: {} }), null);
+  assert.equal(normalizeInboxEntry(null), null);
+
+  const clipped = normalizeInboxEntry({ id: 'msg_5', sessionID: 'ses_1', payload: { text: 'x'.repeat(900) } });
+  assert.equal(clipped?.text.length, 400);
+});
+
+test('inbox events refresh the pending list; delivery also refreshes history', () => {
+  assert.deepEqual(normalizeStreamEvent({
+    type: 'session.inbox.enqueued',
+    data: { sessionID: 'ses_1', inboxID: 'msg_1', item: { type: 'user', payload: { text: 'hi' } } },
+  }), { type: 'inbox-changed', sessionID: 'ses_1' });
+
+  assert.deepEqual(normalizeStreamEvent({
+    type: 'session.inbox.cancelled',
+    data: { sessionID: 'ses_1', inboxID: 'msg_1' },
+  }), { type: 'inbox-changed', sessionID: 'ses_1' });
+
+  assert.deepEqual(normalizeStreamEvent({
+    type: 'session.inbox.delivery.changed',
+    data: { sessionID: 'ses_1', inboxID: 'msg_1', delivery: 'queue' },
+  }), { type: 'inbox-changed', sessionID: 'ses_1' });
+
+  assert.deepEqual(normalizeStreamEvent({
+    type: 'session.inbox.delivered',
+    data: { sessionID: 'ses_1', inboxID: 'msg_1' },
+  }), { type: 'message-changed', sessionID: 'ses_1', messageID: 'msg_1' });
+
+  assert.equal(normalizeStreamEvent({ type: 'session.inbox.cancelled', data: {} }), null);
+});
+
+test('a model says whether it takes images, or says nothing', () => {
+  const base = { id: 'm', providerID: 'p', name: 'M' };
+  assert.equal(normalizeModel({ ...base, capabilities: { tools: true, input: ['text', 'image'] } }, 'P')?.imageInput, true);
+  assert.equal(normalizeModel({ ...base, capabilities: { tools: true, input: ['text'] } }, 'P')?.imageInput, false);
+  assert.equal(normalizeModel(base, 'P')?.imageInput, null);
+  assert.equal(normalizeModel({ ...base, capabilities: { input: ['text', 7] } }, 'P')?.imageInput, false);
 });

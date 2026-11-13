@@ -38,10 +38,15 @@ session, the sandbox's sessions and the directory filter, and the tab shows that
 list in place of the transcript while no session is open. The transcript
 collapses reasoning and expands tool rows in place, with inline permission and
 question cards, and a composer that picks the agent, model and reasoning level.
-The live badge in the header shows the event relay. **OpenCode** starts the
-sandbox's server if it is not running, hosts it on a private boat URL and opens
-its web UI already signed in; each click mints a fresh one-time link. Every
-action ends in a toast, and failures show a banner.
+The composer stays usable while a turn runs: **Steer** puts the message into the
+running turn, **Queue** holds it for after it, and pending messages sit above the
+composer with a cancel and a steer⇄queue switch. Images can be pasted, dropped or
+attached; the panel shrinks and re-encodes them before sending, and each sent
+attachment keeps its name in the transcript. The live badge in the header shows
+the event relay. **OpenCode** starts the sandbox's server if it is not running,
+hosts it on a private boat URL and opens its web UI already signed in; each click
+mints a fresh one-time link. Every action ends in a toast, and failures show a
+banner.
 
 **New sandboxes** — the panel's **New sandbox** button opens a form with two
 independent choices: **Start from** a clean machine, a saved snapshot, or a copy

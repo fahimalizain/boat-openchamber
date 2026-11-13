@@ -3396,6 +3396,7 @@ var OPENCODE_STREAM_TOPIC = "boat:opencode-stream";
 
 // service/opencode/normalize.ts
 var TOOL_OUTPUT_MAX = 20000;
+var INBOX_TEXT_MAX = 400;
 var readTimestamp = (value) => {
   if (typeof value === "number" && Number.isFinite(value))
     return value;
@@ -3709,6 +3710,31 @@ var normalizeMessage = (raw, sessionID) => {
   const text = readString(raw.text) ?? "";
   return { ...base, parts: textPart(text) };
 };
+var INBOX_TYPES = ["user", "synthetic", "compaction", "move"];
+var normalizeInboxEntry = (raw) => {
+  if (!isRecord(raw))
+    return null;
+  const id = readString(raw.id);
+  const sessionID = readString(raw.sessionID);
+  if (!id || !sessionID)
+    return null;
+  const payload = isRecord(raw.payload) ? raw.payload : {};
+  const type = readString(raw.type);
+  const delivery = raw.delivery === "steer" ? "steer" : "queue";
+  const files = Array.isArray(payload.files) ? payload.files.flatMap((entry) => {
+    const file = readAttachment(entry);
+    return file ? [file] : [];
+  }) : [];
+  return {
+    id,
+    sessionID,
+    text: clip(readString(payload.text) ?? "", INBOX_TEXT_MAX),
+    delivery,
+    createdAt: readTimestamp(isRecord(raw.time) ? raw.time.created : null),
+    files,
+    type: type !== null && INBOX_TYPES.includes(type) ? type : "user"
+  };
+};
 var normalizeSession = (raw) => {
   if (!isRecord(raw))
     return null;
@@ -3863,6 +3889,7 @@ var normalizeModel = (raw, providerName) => {
     return variant ? [variant] : [];
   }) : [];
   const capabilities = isRecord(raw.capabilities) ? raw.capabilities : null;
+  const inputs = Array.isArray(capabilities?.input) ? capabilities.input.filter((entry) => typeof entry === "string") : null;
   const limit = isRecord(raw.limit) ? raw.limit : null;
   return {
     id,
@@ -3873,6 +3900,7 @@ var normalizeModel = (raw, providerName) => {
     variants,
     reasoning: variants.length > 0,
     tools: capabilities?.tools === true,
+    imageInput: inputs === null ? null : inputs.includes("image"),
     contextLimit: readNumber(limit?.context),
     outputLimit: readNumber(limit?.output),
     enabled: raw.enabled !== false
@@ -4118,6 +4146,12 @@ var normalizeStreamEvent = (raw) => {
       return { type: "message-content", sessionID, messageID, parts };
     }
     case "session.inbox.enqueued":
+    case "session.inbox.cancelled":
+    case "session.inbox.delivery.changed": {
+      if (!sessionID)
+        return null;
+      return { type: "inbox-changed", sessionID };
+    }
     case "session.inbox.delivered": {
       if (!sessionID)
         return null;
@@ -4441,6 +4475,13 @@ var readQuestions = async (connection, sessionID) => {
   return rowsOf(raw).flatMap((entry) => {
     const request = normalizeQuestionRequest(entry);
     return request ? [request] : [];
+  });
+};
+var readInbox = async (connection, sessionID) => {
+  const raw = await connection.client.session.inbox.list({ sessionID });
+  return rowsOf(raw).flatMap((entry) => {
+    const item = normalizeInboxEntry(entry);
+    return item ? [item] : [];
   });
 };
 var readCatalog = async (connection) => {
@@ -5076,6 +5117,12 @@ var OPENCODE_REQUEST_ID = /^[A-Za-z0-9_-]{1,128}$/;
 var MAX_PROMPT_CHARS = 20000;
 var MAX_TITLE_CHARS = 200;
 var MAX_DIRECTORY_CHARS = 500;
+var MAX_PROMPT_FILES = 4;
+var MAX_PROMPT_FILE_CHARS = 24000;
+var MAX_PROMPT_FILES_CHARS = 48000;
+var MAX_PROMPT_BODY_CHARS = 60000;
+var IMAGE_MIME = /^image\/(png|jpeg|webp|gif)$/;
+var BASE64_DATA = /^[A-Za-z0-9+/]+={0,2}$/;
 var isSandboxId = (value) => typeof value === "string" && SANDBOX_ID.test(value);
 var isOpencodeSessionId = (value) => typeof value === "string" && OPENCODE_SESSION_ID.test(value);
 var isOpencodeRequestId = (value) => typeof value === "string" && OPENCODE_REQUEST_ID.test(value);
@@ -5092,6 +5139,42 @@ var readOpencodeModelRef = (value) => {
   if (variant !== null && !OPENCODE_MODEL_NAME.test(variant))
     return null;
   return { id, providerID, variant };
+};
+var readPromptFile = (value) => {
+  if (!isRecord(value))
+    return null;
+  const name = readString(value.name);
+  const mime = readString(value.mime);
+  const data = readString(value.data);
+  if (!name || name.length > MAX_TITLE_CHARS)
+    return null;
+  if (!mime || !IMAGE_MIME.test(mime))
+    return null;
+  if (!data || data.length > MAX_PROMPT_FILE_CHARS || !BASE64_DATA.test(data))
+    return null;
+  return { name, mime, data };
+};
+var readPromptFiles = (value, textChars) => {
+  if (value === undefined)
+    return { files: [] };
+  if (!Array.isArray(value))
+    return { error: "Unknown attachment." };
+  if (value.length > MAX_PROMPT_FILES) {
+    return { error: `At most ${MAX_PROMPT_FILES} images can ride with one message.` };
+  }
+  const files = [];
+  let chars = 0;
+  for (const entry of value) {
+    const file = readPromptFile(entry);
+    if (!file)
+      return { error: "Only PNG, JPEG, WebP or GIF images can be attached." };
+    chars += file.data.length;
+    files.push(file);
+  }
+  if (chars > MAX_PROMPT_FILES_CHARS || textChars + chars > MAX_PROMPT_BODY_CHARS) {
+    return { error: "That message and its images are too large to send together." };
+  }
+  return { files };
 };
 
 // service/create/request.ts
@@ -5540,6 +5623,12 @@ var opencodeCatalogRoutes = (deps) => [
 
 // service/routes/opencode-chat.ts
 var isDecision = (value) => value === "once" || value === "always" || value === "reject";
+var isDelivery = (value) => value === "steer" || value === "queue";
+var promptFiles = (files) => files.map((file) => ({
+  uri: `data:${file.mime};base64,${file.data}`,
+  source: { type: "inline" },
+  name: file.name
+}));
 var sameModel = (left, right) => left !== null && left.id === right.id && left.providerID === right.providerID && (right.variant === null || left.variant === right.variant);
 var readAnswer = (value) => {
   if (!isRecord(value))
@@ -5569,14 +5658,22 @@ var opencodeChatRoutes = (deps) => [
     const body = await context.json();
     const sandboxId = readString(body?.sandbox);
     const sessionId = readString(body?.session);
-    const text = readString(body?.text);
+    const text = readString(body?.text) ?? "";
     if (!isSandboxId(sandboxId) || !isOpencodeSessionId(sessionId)) {
       return context.reply(400, errorBody("Unknown sandbox or session."));
     }
-    if (!text)
-      return context.reply(400, errorBody("Write a prompt first."));
     if (text.length > MAX_PROMPT_CHARS)
       return context.reply(400, errorBody("That prompt is too long."));
+    const read = readPromptFiles(body?.files, text.length);
+    if ("error" in read)
+      return context.reply(400, errorBody(read.error));
+    const files = read.files;
+    if (!text && files.length === 0)
+      return context.reply(400, errorBody("Write a prompt first."));
+    const delivery = body?.delivery === undefined ? null : body.delivery;
+    if (delivery !== null && !isDelivery(delivery)) {
+      return context.reply(400, errorBody("Unknown delivery."));
+    }
     const agent = readString(body?.agent);
     if (agent && !isOpencodeName(agent))
       return context.reply(400, errorBody("Unknown agent."));
@@ -5596,7 +5693,12 @@ var opencodeChatRoutes = (deps) => [
             await connection.client.session.switchModel({ sessionID: sessionId, model: toModelRefInput(model) });
           }
         }
-        const raw = await connection.client.session.prompt({ sessionID: sessionId, text });
+        const raw = await connection.client.session.prompt({
+          sessionID: sessionId,
+          text,
+          ...files.length > 0 ? { files: promptFiles(files) } : {},
+          ...delivery ? { delivery } : {}
+        });
         return isRecord(raw) ? readString(raw.id) : null;
       });
       const answer = { ok: true, sessionID: sessionId, messageID };
@@ -5694,6 +5796,58 @@ var opencodeEventRoutes = (deps) => [
   })
 ];
 
+// service/routes/opencode-inbox.ts
+var opencodeInboxRoutes = (deps) => [
+  route("GET", "/opencode/inbox", async (context) => {
+    const sandboxId = context.search.get("sandbox");
+    const sessionId = context.search.get("session");
+    if (!isSandboxId(sandboxId) || !isOpencodeSessionId(sessionId)) {
+      return context.reply(400, errorBody("Unknown sandbox or session."));
+    }
+    try {
+      const entries = await deps.opencode.run(sandboxId, (connection) => readInbox(connection, sessionId));
+      const body = { entries, now: Date.now() };
+      return context.reply(200, body);
+    } catch (failure) {
+      return context.reply(502, errorBody(describeFailure(failure).text));
+    }
+  }),
+  route("POST", "/opencode/inbox/cancel", async (context) => {
+    const body = await context.json();
+    const sandboxId = readString(body?.sandbox);
+    const sessionId = readString(body?.session);
+    const inboxId = readString(body?.inbox);
+    if (!isSandboxId(sandboxId) || !isOpencodeSessionId(sessionId) || !isOpencodeRequestId(inboxId)) {
+      return context.reply(400, errorBody("Unknown sandbox, session or inbox entry."));
+    }
+    try {
+      await deps.opencode.run(sandboxId, (connection) => connection.client.session.inbox.cancel({ sessionID: sessionId, inboxID: inboxId }));
+      return context.reply(200, { ok: true });
+    } catch (failure) {
+      return context.reply(502, errorBody(describeFailure(failure).text));
+    }
+  }),
+  route("POST", "/opencode/inbox/update", async (context) => {
+    const body = await context.json();
+    const sandboxId = readString(body?.sandbox);
+    const sessionId = readString(body?.session);
+    const inboxId = readString(body?.inbox);
+    const delivery = body?.delivery;
+    if (!isSandboxId(sandboxId) || !isOpencodeSessionId(sessionId) || !isOpencodeRequestId(inboxId)) {
+      return context.reply(400, errorBody("Unknown sandbox, session or inbox entry."));
+    }
+    if (delivery !== "steer" && delivery !== "queue") {
+      return context.reply(400, errorBody("Unknown delivery."));
+    }
+    try {
+      await deps.opencode.run(sandboxId, (connection) => connection.client.session.inbox.update({ sessionID: sessionId, inboxID: inboxId, delivery }));
+      return context.reply(200, { ok: true });
+    } catch (failure) {
+      return context.reply(502, errorBody(describeFailure(failure).text));
+    }
+  })
+];
+
 // service/routes/opencode-sessions.ts
 var opencodeSessionRoutes = (deps) => [
   route("GET", "/opencode/sessions", async (context) => {
@@ -5727,12 +5881,13 @@ var opencodeSessionRoutes = (deps) => [
         const session = await readSession(connection, sessionId);
         if (!session)
           throw new Error("That OpenCode session no longer exists.");
-        const [history, permissions, questions] = await Promise.all([
+        const [history, permissions, questions, inbox] = await Promise.all([
           readSessionMessages(connection, sessionId),
           readPermissions(connection, sessionId),
-          readQuestions(connection, sessionId)
+          readQuestions(connection, sessionId),
+          readInbox(connection, sessionId)
         ]);
-        return { session, ...history, permissions, questions };
+        return { session, ...history, permissions, questions, inbox };
       });
       const body = { ...result, now: Date.now() };
       return context.reply(200, body);
@@ -5935,6 +6090,7 @@ var route2 = createRouter([
   ...createRoutes(context),
   ...opencodeSessionRoutes(context),
   ...opencodeChatRoutes(context),
+  ...opencodeInboxRoutes(context),
   ...opencodeCatalogRoutes(context),
   ...opencodeEventRoutes(context),
   ...mentionRoutes(context),

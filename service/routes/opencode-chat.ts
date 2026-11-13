@@ -5,11 +5,16 @@ import {
   type OpencodeAbortRequest,
   type OpencodeAbortResponse,
   type OpencodePermissionReplyRequest,
+  type OpencodePromptFile,
   type OpencodePromptRequest,
   type OpencodePromptResponse,
   type OpencodeQuestionReplyRequest,
 } from '../../shared/routes.ts';
-import type { OpencodeModelRef, OpencodeQuestionAnswer } from '../../shared/opencode.ts';
+import type {
+  OpencodeInboxDelivery,
+  OpencodeModelRef,
+  OpencodeQuestionAnswer,
+} from '../../shared/opencode.ts';
 import type { ServiceContext } from '../context.ts';
 import { describeFailure } from '../failures.ts';
 import { normalizeSession, toModelRefInput } from '../opencode/normalize.ts';
@@ -21,6 +26,7 @@ import {
   isSandboxId,
   MAX_PROMPT_CHARS,
   readOpencodeModelRef,
+  readPromptFiles,
 } from '../validation.ts';
 
 type Deps = Pick<ServiceContext, 'opencode'>;
@@ -28,6 +34,21 @@ type Deps = Pick<ServiceContext, 'opencode'>;
 const isDecision = (value: unknown): value is 'once' | 'always' | 'reject' => (
   value === 'once' || value === 'always' || value === 'reject'
 );
+
+const isDelivery = (value: unknown): value is OpencodeInboxDelivery => (
+  value === 'steer' || value === 'queue'
+);
+
+/** The client's file input: inline bytes with the MIME in the data URI. */
+const promptFiles = (files: OpencodePromptFile[]): Array<{
+  uri: string;
+  source: { type: 'inline' };
+  name: string;
+}> => files.map((file) => ({
+  uri: `data:${file.mime};base64,${file.data}`,
+  source: { type: 'inline' as const },
+  name: file.name,
+}));
 
 const sameModel = (left: OpencodeModelRef | null, right: OpencodeModelRef): boolean => (
   left !== null
@@ -61,12 +82,21 @@ export const opencodeChatRoutes = (deps: Deps): Route[] => [
     const body = await context.json<OpencodePromptRequest>();
     const sandboxId = readString(body?.sandbox);
     const sessionId = readString(body?.session);
-    const text = readString(body?.text);
+    const text = readString(body?.text) ?? '';
     if (!isSandboxId(sandboxId) || !isOpencodeSessionId(sessionId)) {
       return context.reply(400, errorBody('Unknown sandbox or session.'));
     }
-    if (!text) return context.reply(400, errorBody('Write a prompt first.'));
     if (text.length > MAX_PROMPT_CHARS) return context.reply(400, errorBody('That prompt is too long.'));
+
+    const read = readPromptFiles(body?.files, text.length);
+    if ('error' in read) return context.reply(400, errorBody(read.error));
+    const files = read.files;
+    if (!text && files.length === 0) return context.reply(400, errorBody('Write a prompt first.'));
+
+    const delivery = body?.delivery === undefined ? null : body.delivery;
+    if (delivery !== null && !isDelivery(delivery)) {
+      return context.reply(400, errorBody('Unknown delivery.'));
+    }
 
     const agent = readString(body?.agent);
     if (agent && !isOpencodeName(agent)) return context.reply(400, errorBody('Unknown agent.'));
@@ -87,7 +117,12 @@ export const opencodeChatRoutes = (deps: Deps): Route[] => [
             await connection.client.session.switchModel({ sessionID: sessionId, model: toModelRefInput(model) });
           }
         }
-        const raw: unknown = await connection.client.session.prompt({ sessionID: sessionId, text });
+        const raw: unknown = await connection.client.session.prompt({
+          sessionID: sessionId,
+          text,
+          ...(files.length > 0 ? { files: promptFiles(files) } : {}),
+          ...(delivery ? { delivery } : {}),
+        });
         return isRecord(raw) ? readString(raw.id) : null;
       });
       const answer: OpencodePromptResponse = { ok: true, sessionID: sessionId, messageID };

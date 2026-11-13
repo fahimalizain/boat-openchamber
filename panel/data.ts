@@ -2,6 +2,7 @@
 import type { OpencodeSessionsResponse } from '../shared/routes.ts';
 import { isUpState } from '../shared/types.ts';
 import type { ServiceClient } from './api.ts';
+import { releaseImages } from './attachments.ts';
 import { settleSelection, selectionForSession, type Selection } from './catalog.ts';
 import { createChatModel } from './chat-model.ts';
 import { messageOf, resetSession, type Cell, type Reporter } from './state.ts';
@@ -10,6 +11,8 @@ export type Loaders = {
   sandboxes: (preferredSandboxId?: string | null) => Promise<void>;
   sessions: (settings?: { autoSelect?: boolean }) => Promise<void>;
   messages: (sessionId?: string | null) => Promise<void>;
+  /** Re-reads only the open session's pending inbox. */
+  inbox: (sessionId?: string | null) => Promise<void>;
   catalog: () => Promise<void>;
   /** Drop the old sandbox and read the new one; the first sandbox included. */
   activateSandbox: (sandboxId: string | null, previous?: string | null) => Promise<void>;
@@ -88,7 +91,21 @@ export const createLoaders = (deps: {
       questions: data.questions,
       truncated: data.truncated,
     });
+    current.inbox = data.inbox;
     current.sessions = current.sessions.map((entry) => (entry.id === session.id ? session : entry));
+    cell.notify();
+  };
+
+  const inbox = async (sessionId: string | null = null): Promise<void> => {
+    const state = cell.get();
+    const sandboxId = state.sandboxId;
+    const wanted = sessionId ?? state.sessionId;
+    if (!sandboxId || !wanted) return;
+
+    const data = await client.inbox(sandboxId, wanted);
+    const current = cell.get();
+    if (current.sandboxId !== sandboxId || current.sessionId !== wanted) return;
+    current.inbox = data.entries;
     cell.notify();
   };
 
@@ -96,7 +113,7 @@ export const createLoaders = (deps: {
     const state = cell.get();
     if (!state.sandboxId) return;
     if (!sessionId) {
-      cell.patch({ sessionId: null, chat: null });
+      cell.patch({ sessionId: null, chat: null, inbox: [] });
       return;
     }
 
@@ -106,7 +123,7 @@ export const createLoaders = (deps: {
       ? selectionForSession(session, current, state.catalog)
       : settleSelection(current, state.catalog);
 
-    cell.patch({ sessionId, chat: null, ...selection });
+    cell.patch({ sessionId, chat: null, inbox: [], ...selection });
     await messages(sessionId);
   };
 
@@ -143,6 +160,7 @@ export const createLoaders = (deps: {
     if (current.sessionId && !data.sessions.some((entry) => entry.id === current.sessionId)) {
       current.sessionId = null;
       current.chat = null;
+      current.inbox = [];
     }
     const openId = current.sessionId;
     cell.notify();
@@ -157,6 +175,7 @@ export const createLoaders = (deps: {
     if (previous && previous !== sandboxId) {
       void client.unwatch(previous).catch(() => {});
     }
+    releaseImages(cell.get().attachments);
     resetSession(cell);
     cell.patch({ sandboxId });
 
@@ -207,5 +226,5 @@ export const createLoaders = (deps: {
     await watch(state.sandboxId);
   };
 
-  return { sandboxes, sessions, messages, catalog, activateSandbox, openSession, refreshAll, retryLive };
+  return { sandboxes, sessions, messages, inbox, catalog, activateSandbox, openSession, refreshAll, retryLive };
 };

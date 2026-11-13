@@ -1,10 +1,12 @@
 /** The panel's state cell, its message helper, and the small resets around it. */
 import type {
   OpencodeCatalog,
+  OpencodeInboxEntry,
   OpencodeModelRef,
   OpencodeSession,
 } from '../shared/opencode.ts';
 import type { ScopedSandboxSummary } from '../shared/routes.ts';
+import type { PendingImage } from './attachments.ts';
 import type { ChatModel } from './chat-model.ts';
 import { initialCreateState, type CreateState } from './create-state.ts';
 import type { PanelTab } from './tab.ts';
@@ -46,6 +48,10 @@ export type PanelState = {
   sessionId: string | null;
   chat: ChatModel | null;
   catalog: OpencodeCatalog | null;
+  /** Prompts OpenCode is holding for the open session (steers and queued sends). */
+  inbox: OpencodeInboxEntry[];
+  /** Images ready to ride with the next prompt. */
+  attachments: PendingImage[];
 
   /** The composer's picks; they apply to the next session or prompt. */
   agent: string;
@@ -78,6 +84,8 @@ export const initialState = (directory: string | null): PanelState => ({
   sessionId: null,
   chat: null,
   catalog: null,
+  inbox: [],
+  attachments: [],
   agent: '',
   model: null,
   variant: null,
@@ -125,6 +133,8 @@ export const resetSession = (cell: Cell): void => {
     sessionId: null,
     chat: null,
     catalog: null,
+    inbox: [],
+    attachments: [],
     draft: '',
     live: false,
     watchBroken: false,
