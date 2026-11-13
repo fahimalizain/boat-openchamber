@@ -26,6 +26,7 @@ import {
 } from './normalize.ts';
 
 const SESSION_PAGE = 100;
+const SESSION_PAGES_MAX = 4;
 const MESSAGE_PAGE = 200;
 const MAX_MESSAGE_PAGES = 10;
 
@@ -34,19 +35,46 @@ const rowsOf = (value: unknown): unknown[] => {
   return isRecord(value) && Array.isArray(value.data) ? value.data : [];
 };
 
+const sessionsOf = (rows: unknown[]): OpencodeSession[] => rows.flatMap((entry) => {
+  const session = normalizeSession(entry);
+  return session ? [session] : [];
+});
+
+const cursorOf = (raw: unknown): string | null => (
+  readString(isRecord(raw) && isRecord(raw.cursor) ? raw.cursor.next : null)
+);
+
+/**
+ * Sessions in a sandbox, newest first. OpenCode's `directory` filter is only a
+ * project hint (it returns sessions that live above the picked directory), so
+ * the exact match is made here: a directory's sessions are the ones whose own
+ * location equals it. Paging stops once there are enough matches.
+ */
 export const readSessions = async (
   connection: OpencodeConnection,
   directory: string | null = null,
 ): Promise<OpencodeSession[]> => {
-  const raw: unknown = await connection.client.session.list({
-    limit: SESSION_PAGE,
-    order: 'desc',
-    ...(directory ? { directory } : {}),
-  });
-  return rowsOf(raw).flatMap((entry) => {
-    const session = normalizeSession(entry);
-    return session ? [session] : [];
-  });
+  const rows: unknown[] = [];
+  let cursor: string | null = null;
+
+  for (let page = 0; page < (directory ? SESSION_PAGES_MAX : 1); page += 1) {
+    const raw: unknown = await connection.client.session.list({
+      limit: SESSION_PAGE,
+      // A cursor already carries the order the first page chose.
+      ...(cursor ? { cursor } : { order: 'desc' as const }),
+    });
+    const batch = rowsOf(raw);
+    rows.push(...batch);
+
+    if (!directory) break;
+    if (sessionsOf(rows).filter((session) => session.directory === directory).length >= SESSION_PAGE) break;
+    cursor = cursorOf(raw);
+    if (!cursor || batch.length === 0) break;
+  }
+
+  const sessions = sessionsOf(rows);
+  if (!directory) return sessions;
+  return sessions.filter((session) => session.directory === directory).slice(0, SESSION_PAGE);
 };
 
 export const readSession = async (
