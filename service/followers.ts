@@ -210,12 +210,19 @@ export const createFollowers = (options: {
 };
 
 /** Kills every follower when the service itself is going away. */
-export const installFollowerCleanup = (followers: Followers): void => {
+export const installFollowerCleanup = (
+  followers: Followers,
+  others: Array<{ stopAll: () => void }> = [],
+): void => {
+  const stopAll = (): void => {
+    followers.stopAll();
+    for (const other of others) other.stopAll();
+  };
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, () => {
-      followers.stopAll();
+      stopAll();
       process.exit(0);
     });
   }
-  process.on('exit', () => followers.stopAll());
+  process.on('exit', stopAll);
 };

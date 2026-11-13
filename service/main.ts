@@ -12,6 +12,10 @@ import { conversationRoutes } from './routes/conversations.ts';
 import { createRoutes } from './routes/create.ts';
 import { eventRoutes } from './routes/events.ts';
 import { mentionRoutes } from './routes/mentions.ts';
+import { opencodeCatalogRoutes } from './routes/opencode-catalog.ts';
+import { opencodeChatRoutes } from './routes/opencode-chat.ts';
+import { opencodeEventRoutes } from './routes/opencode-events.ts';
+import { opencodeSessionRoutes } from './routes/opencode-sessions.ts';
 import { projectRoutes } from './routes/projects.ts';
 import { sandboxRoutes } from './routes/sandboxes.ts';
 import { scheduleRoutes } from './routes/schedule.ts';
@@ -45,6 +49,10 @@ const route = createRouter([
   ...createRoutes(context),
   ...agentRoutes(context),
   ...agentCatalogRoutes(context),
+  ...opencodeSessionRoutes(context),
+  ...opencodeChatRoutes(context),
+  ...opencodeCatalogRoutes(context),
+  ...opencodeEventRoutes(context),
   ...mentionRoutes(context),
   ...projectRoutes({
     projects: context.projects,
@@ -81,7 +89,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, '127.0.0.1', () => {
-  installFollowerCleanup(context.followers);
+  installFollowerCleanup(context.followers, [context.opencodeFollowers]);
   // Sends the instructions once on start, then keeps them in step with the list.
   void context.refresh().catch(() => {});
 });

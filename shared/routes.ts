@@ -1,5 +1,15 @@
 /** What the panel and the service say to each other, plus the row action ids. */
 import type {
+  OpencodeCatalog,
+  OpencodeMessage,
+  OpencodeModelRef,
+  OpencodePermissionDecision,
+  OpencodePermissionRequest,
+  OpencodeQuestionAnswer,
+  OpencodeQuestionRequest,
+  OpencodeSession,
+} from './opencode.ts';
+import type {
   Conversation,
   ProjectMatch,
   SandboxAction,
@@ -150,6 +160,76 @@ export type InterruptRequest = { sandbox: string; conversation: string };
 
 export type ActionRequest = { sandbox: string; action: SandboxAction };
 export type ActionResponse = OkBody & { url?: string };
+
+/** Sessions in a sandbox, newest first. `directory` filters to one location. */
+export type OpencodeSessionsResponse = {
+  sessions: OpencodeSession[];
+  /** Where a new session lands unless the panel picks another directory. */
+  directory: string;
+  /** The repository directories OpenCode can open sessions in, then the home. */
+  directories: string[];
+  now: number;
+};
+
+export type OpencodeMessagesResponse = {
+  session: OpencodeSession;
+  messages: OpencodeMessage[];
+  permissions: OpencodePermissionRequest[];
+  questions: OpencodeQuestionRequest[];
+  /** True when the history ran past the service's page cap. */
+  truncated: boolean;
+  now: number;
+};
+
+export type OpencodeCreateSessionRequest = {
+  sandbox: string;
+  /** An absolute directory from the catalog; defaults to the service's choice. */
+  directory?: string;
+  title?: string;
+  agent?: string;
+  model?: OpencodeModelRef;
+};
+
+export type OpencodeSessionResponse = { session: OpencodeSession };
+
+export type OpencodePromptRequest = {
+  sandbox: string;
+  session: string;
+  text: string;
+  /** Switch the session's agent and model before the prompt, when given. */
+  agent?: string;
+  model?: OpencodeModelRef;
+};
+
+export type OpencodePromptResponse = OkBody & {
+  sessionID: string;
+  /** The admitted user message, when the server returns it. */
+  messageID: string | null;
+};
+
+export type OpencodeAbortRequest = { sandbox: string; session: string };
+export type OpencodeAbortResponse = OkBody & { interrupted: boolean };
+
+export type OpencodePermissionReplyRequest = {
+  sandbox: string;
+  session: string;
+  request: string;
+  decision: OpencodePermissionDecision;
+  message?: string;
+};
+
+export type OpencodeQuestionReplyRequest = {
+  sandbox: string;
+  session: string;
+  question: string;
+  answer: Record<string, OpencodeQuestionAnswer>;
+};
+
+export type OpencodeCatalogResponse = OpencodeCatalog & { now: number };
+
+/** One OpenCode event stream per sandbox; every watch call is a keep-alive. */
+export type OpencodeWatchRequest = { sandbox: string };
+export type OpencodeUnwatchRequest = OpencodeWatchRequest;
 
 const ROW_ID_MAX = 40;
 

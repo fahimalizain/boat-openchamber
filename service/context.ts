@@ -17,6 +17,8 @@ import { listSandboxes, renameSandbox, spawnCreate } from './domain/sandboxes.ts
 import { createFollowers, type EventSink, type Followers } from './followers.ts';
 import { createInstructionsWriter } from './instructions.ts';
 import { createMarker, type Marker } from './marks/marker.ts';
+import { createOpencodeConnections, type OpencodeConnections } from './opencode/connection.ts';
+import { createOpencodeFollowers, type OpencodeFollowers } from './opencode/followers.ts';
 import { createProjectRanking, type ProjectRanking } from './project/ranking.ts';
 import { createRemoteCache, type RemoteCache } from './project/remotes.ts';
 import { createScoper, type Scoper } from './project/scope.ts';
@@ -37,6 +39,9 @@ export type ServiceContext = {
   desktop: DesktopLinks;
   agents: RunningAgents;
   followers: Followers;
+  /** The sandbox OpenCode servers the new chat talks to. */
+  opencode: OpencodeConnections;
+  opencodeFollowers: OpencodeFollowers;
   scoper: Scoper;
   ranking: ProjectRanking;
   environments: EnvironmentList;
@@ -91,11 +96,19 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
     onSnapshot: createWarmer({ conversations, desktop, agents, planNote, instructions, marker }),
   });
   const followers = createFollowers({ sink: host.emit, ...FOLLOWERS });
+  const opencode = createOpencodeConnections();
+  const opencodeFollowers = createOpencodeFollowers({
+    connections: opencode,
+    sink: host.emit,
+    ...FOLLOWERS,
+  });
 
   const forgetSandbox = (sandboxId: string): void => {
     conversations.forget(sandboxId);
     agents.forget(sandboxId);
     desktop.forget(sandboxId);
+    opencode.forget(sandboxId);
+    opencodeFollowers.unwatch(sandboxId);
   };
 
   const createJobs = createCreateJobs({
@@ -120,6 +133,8 @@ export const createServiceContext = (host: ServiceHost): ServiceContext => {
     desktop,
     agents,
     followers,
+    opencode,
+    opencodeFollowers,
     scoper,
     ranking,
     environments,
